@@ -57,6 +57,9 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         time_window: args.time_window,
         preset: args.preset.clone(),
         config: args.config.clone(),
+        solver: "greedy".into(),
+        co_access_window_ms: 0,
+        co_access_top_k: 0,
         ilp: false,
     };
     let config = super::optimize::load_config(&opt_args)?;

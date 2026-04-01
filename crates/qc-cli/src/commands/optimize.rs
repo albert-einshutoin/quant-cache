@@ -35,7 +35,19 @@ pub struct OptimizeArgs {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Use ILP solver instead of greedy
+    /// Solver: greedy (default), ilp, sa (simulated annealing with QUBO)
+    #[arg(long, default_value = "greedy")]
+    pub solver: String,
+
+    /// Co-access window in milliseconds (for SA solver, 0 = no co-access)
+    #[arg(long, default_value_t = 5000)]
+    pub co_access_window_ms: i64,
+
+    /// Max co-access pairs to include (for SA solver)
+    #[arg(long, default_value_t = 10000)]
+    pub co_access_top_k: usize,
+
+    /// Use ILP solver instead of greedy (shorthand for --solver ilp)
     #[arg(long, default_value_t = false)]
     pub ilp: bool,
 }
@@ -48,34 +60,100 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
     tracing::info!(objects = features.len(), "aggregated object features");
 
     let config = load_config(args)?;
-
     let scored = BenefitCalculator::score_all(&features, &config)?;
 
-    let constraint = qc_model::scenario::CapacityConstraint {
-        capacity_bytes: config.capacity_bytes,
-    };
-
-    let result = if args.ilp {
-        tracing::info!("using ILP solver");
-        qc_solver::ilp::ExactIlpSolver.solve(&scored, &constraint)?
+    let solver_name = if args.ilp {
+        "ilp"
     } else {
-        tracing::info!("using greedy solver");
-        qc_solver::greedy::GreedySolver.solve(&scored, &constraint)?
+        args.solver.as_str()
     };
 
-    // Gather stats before moving decisions
-    let num_cached = result.decisions.iter().filter(|d| d.cache).count();
-    let num_total = result.decisions.len();
-    let objective_value = result.objective_value;
-    let solve_time_ms = result.solve_time_ms;
-    let shadow_price = result.shadow_price;
+    let (decisions, objective_value, solve_time_ms, shadow_price, gap) = match solver_name {
+        "ilp" => {
+            tracing::info!("using ILP solver");
+            let constraint = qc_model::scenario::CapacityConstraint {
+                capacity_bytes: config.capacity_bytes,
+            };
+            let r = qc_solver::ilp::ExactIlpSolver.solve(&scored, &constraint)?;
+            (
+                r.decisions,
+                r.objective_value,
+                r.solve_time_ms,
+                r.shadow_price,
+                r.gap,
+            )
+        }
+        "sa" => {
+            tracing::info!("using SA (QUBO) solver");
+            use qc_solver::qubo::{
+                PairwiseInteraction, QuadraticProblem, QuadraticSolver, SimulatedAnnealingSolver,
+            };
+
+            // Build co-access interactions
+            let interactions = if args.co_access_window_ms > 0 {
+                let pairs = qc_simulate::co_access::extract_co_access(
+                    &events,
+                    args.co_access_window_ms,
+                    args.co_access_top_k,
+                );
+                // Build cache_key → index map
+                let key_to_idx: std::collections::HashMap<&str, u32> = scored
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (s.cache_key.as_str(), i as u32))
+                    .collect();
+
+                pairs
+                    .iter()
+                    .filter_map(|p| {
+                        let i = key_to_idx.get(p.key_a.as_str())?;
+                        let j = key_to_idx.get(p.key_b.as_str())?;
+                        Some(PairwiseInteraction {
+                            i: *i,
+                            j: *j,
+                            weight: p.weight,
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            tracing::info!(interactions = interactions.len(), "co-access pairs");
+
+            let problem = QuadraticProblem {
+                objects: scored.clone(),
+                interactions,
+                capacity_bytes: config.capacity_bytes,
+            };
+            let solver = SimulatedAnnealingSolver::default();
+            let r = solver.solve(&problem)?;
+            (r.decisions, r.objective_value, r.solve_time_ms, None, None)
+        }
+        _ => {
+            tracing::info!("using greedy solver");
+            let constraint = qc_model::scenario::CapacityConstraint {
+                capacity_bytes: config.capacity_bytes,
+            };
+            let r = qc_solver::greedy::GreedySolver.solve(&scored, &constraint)?;
+            (
+                r.decisions,
+                r.objective_value,
+                r.solve_time_ms,
+                r.shadow_price,
+                r.gap,
+            )
+        }
+    };
+
+    let num_cached = decisions.iter().filter(|d| d.cache).count();
+    let num_total = decisions.len();
 
     let scored_size_map: std::collections::HashMap<&str, u64> = scored
         .iter()
         .map(|s| (s.cache_key.as_str(), s.size_bytes))
         .collect();
-    let cached_bytes: u64 = result
-        .decisions
+    let cached_bytes: u64 = decisions
         .iter()
         .filter(|d| d.cache)
         .map(|d| {
@@ -88,25 +166,22 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
 
     let policy_file = qc_model::policy::PolicyFile {
         solver: qc_model::policy::SolverMetadata {
-            solver_name: if args.ilp {
-                "ExactILP".into()
-            } else {
-                "Greedy".into()
-            },
+            solver_name: solver_name.to_string(),
             objective_value,
             solve_time_ms,
             shadow_price,
-            optimality_gap: result.gap,
+            optimality_gap: gap,
             capacity_bytes: config.capacity_bytes,
             cached_bytes,
         },
-        decisions: result.decisions,
+        decisions,
     };
     let json = serde_json::to_string_pretty(&policy_file)?;
     std::fs::write(&args.output, &json)?;
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
+    writeln!(out, "Solver: {solver_name}")?;
     writeln!(out, "Optimized: {num_cached}/{num_total} objects cached")?;
     writeln!(out, "Objective value: {objective_value:.4}")?;
     writeln!(out, "Solve time: {solve_time_ms}ms")?;

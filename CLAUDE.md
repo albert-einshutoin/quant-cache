@@ -31,6 +31,11 @@ Scoring and solving are separated:
 
 - `crates/qc-solver/src/score.rs` — scoring formula (the economic core)
 - `crates/qc-solver/src/greedy.rs` — greedy solver (dual ratio + pure-benefit)
+- `crates/qc-solver/src/qubo.rs` — QUBO types + simulated annealing solver
+- `crates/qc-solver/src/calibrate.rs` — coefficient calibration (coordinate descent)
+- `crates/qc-simulate/src/co_access.rs` — time-window co-occurrence extraction
+- `crates/qc-simulate/src/reuse_distance.rs` — stack distance computation
+- `crates/qc-cli/src/providers/cloudfront.rs` — CloudFront log parser
 - `crates/qc-simulate/src/engine.rs` — trace replay with per-object stale penalty
 - `crates/qc-simulate/src/baselines.rs` — LRU, GDSF, StaticPolicy with stale detection
 - `crates/qc-simulate/src/synthetic.rs` — trace generator + feature aggregation

@@ -10,8 +10,8 @@
 
 ```text
 V1.0 ──→ V1.1 ──→ V1.5 ──→ V1.6 ──→ V2.0 ──→ V2.5 ──→ V3.0
- done    ingest   model     reuse    QUBO    provider  quantum
-                  strength  distance          API
+ done     done     done     done     done    provider  quantum
+                                              API
 ```
 
 ---

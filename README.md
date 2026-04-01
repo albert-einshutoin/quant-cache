@@ -79,7 +79,7 @@ quant-cache/
 │   ├── qc-model/        Data types, configs, presets, error types
 │   ├── qc-solver/       BenefitCalculator, GreedySolver, ExactIlpSolver
 │   ├── qc-simulate/     TraceReplayEngine, LRU/GDSF baselines, synthetic generator
-│   └── qc-cli/          CLI (generate, optimize, simulate, compare)
+│   └── qc-cli/          CLI (import, generate, optimize, simulate, compare, calibrate)
 ├── data/
 │   ├── samples/         Sample trace CSV and TOML config
 │   └── schemas/         Trace event schema definition
@@ -87,6 +87,15 @@ quant-cache/
 ```
 
 ## CLI Commands
+
+### `qc import`
+
+Import CDN provider logs into canonical trace format.
+
+```bash
+qc import --provider cloudfront --input access.log --output trace.csv
+qc import --provider cloudfront --input access.log --output trace.csv --cost-config costs.toml
+```
 
 ### `qc generate`
 
@@ -109,7 +118,10 @@ qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset 
 qc optimize --input trace.csv --output policy.json --config scenario.toml
 
 # Using ILP solver for exact solution
-qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset ecommerce --ilp
+qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset ecommerce --solver ilp
+
+# Using SA solver with QUBO (co-access quadratic terms)
+qc optimize --input trace.csv --output policy.json --capacity 50000000 --solver sa --co-access-window-ms 5000
 ```
 
 ### `qc simulate`
@@ -120,13 +132,22 @@ Replay a trace against a saved policy and report metrics.
 qc simulate --input trace.csv --policy policy.json --output metrics.json
 ```
 
+### `qc calibrate`
+
+Automatically tune economic parameters using train/validation traces.
+
+```bash
+qc calibrate --train train.csv --validation val.csv --capacity 50000000 --restarts 3
+```
+
 ### `qc compare`
 
-Compare EconomicGreedy against LRU and GDSF baselines on the same trace.
+Compare EconomicGreedy against LRU, GDSF, and optionally Belady/ILP baselines.
 
 ```bash
 qc compare --input trace.csv --capacity 50000000 --preset ecommerce
 qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-ilp
+qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-belady
 ```
 
 Output:
@@ -171,8 +192,9 @@ medium = 0.05
 
 | Solver | Use | Complexity | Notes |
 |--------|-----|------------|-------|
-| GreedySolver | Default | O(n log n) | Runs ratio + pure-benefit variants, picks best |
-| ExactIlpSolver | Verification | Exact | HiGHS backend, practical for n < 10,000 |
+| GreedySolver | Default (`--solver greedy`) | O(n log n) | Ratio + pure-benefit dual strategy |
+| ExactIlpSolver | Verification (`--solver ilp`) | Exact | HiGHS backend, n < 10,000 |
+| SimulatedAnnealingSolver | QUBO (`--solver sa`) | Metaheuristic | Co-access quadratic terms |
 
 ### V1 Performance
 
@@ -195,7 +217,7 @@ V1 provides two mutually exclusive models to prevent double-counting:
 ## Testing
 
 ```bash
-cargo test --workspace                                    # 75 unit/integration/proptest tests
+cargo test --workspace                                    # 80+ unit/integration/proptest tests
 cargo test --release --workspace -- --ignored             # acceptance + performance guards
 cargo bench -p qc-solver                                  # greedy solver benchmarks
 cargo bench -p qc-simulate                                # replay benchmarks
