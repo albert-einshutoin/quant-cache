@@ -1,17 +1,25 @@
 # quant-cache Roadmap
 
-**Version:** 1.0
-**Date:** 2026-04-01
-**Status:** Confirmed (Claude x Codex)
+**Version:** 2.0
+**Date:** 2026-04-02
+**Status:** Revised — Economic Cache Control Plane direction
 
 ---
 
-## Version Overview
+## Strategic Direction
+
+quant-cache evolves from an evaluation framework into an **economic cache control plane**:
+- Evaluate cache policies through explicit economic objectives
+- Search the policy design space using quantum-inspired optimization (design-time only)
+- Generate vendor-native cache configurations for deployment
+
+## Phase Overview
 
 ```text
-V1.0 ──→ V1.1 ──→ V1.5 ──→ V1.6 ──→ V2.0 ──→ V2.5 ──→ V3.0
- done     done     done     done     done    provider  quantum
-                                              API
+Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
+  done       next        planned     planned     planned
+evaluation  Policy IR   Policy      Vendor      Multi-vendor
+framework   + evaluator search      compiler    + quantum
 ```
 
 ---
@@ -171,38 +179,89 @@ trait QuadraticSolver {
 
 ---
 
-## V2.5 — Provider Integration
+---
 
-**Goal:** Connect optimization results to CDN provider APIs
+## Phase B — Policy IR + Evaluator (NEXT)
+
+**Goal:** Define a policy intermediate representation and replay it
+
+### Policy IR
+
+```rust
+struct PolicyIR {
+    backend: Backend,              // SIEVE | S3FIFO | TinyLFU
+    admission_rule: AdmissionRule, // always | score > τ | score/size > τ
+    bypass_rule: BypassRule,       // freshness_risk > τ | size > τ
+    prewarm_set: Vec<String>,      // top-k by objective
+    ttl_class_rules: Vec<TtlClassRule>,
+    cache_key_rules: Vec<CacheKeyRule>,
+}
+```
 
 ### Deliverables
 
-- CloudFront: invalidation list, cache behavior rules
-- Cloudflare: cache rules, bypass settings, purge targets
-- Policy rollout/rollback mechanism
-- Production vs replay KPI comparison (observability)
-- Change management (churn control, diff limits)
+- Policy IR type definitions in qc-model
+- IR-based replay in qc-simulate (not just CachePolicy trait)
+- `qc policy-eval` CLI command: evaluate IR configs on traces
+- Comparison of IR configurations vs pure baselines
 
 ---
 
-## V3.0 — Quantum Backend (Experimental)
+## Phase C — Policy Search Engine
 
-**Goal:** Connect QUBO to quantum hardware for research/demonstration
+**Goal:** Search the policy DSL space for optimal configurations
 
 ### Deliverables
 
-- IBM Quantum adapter
-- Amplify adapter
-- Small-scale problem demonstration
-- Classical vs quantum solver comparison paper
+- Policy search space definition (backend × admission × bypass × prewarm)
+- SA/QUBO over the discrete policy configuration space
+- Automatic policy recommendation from trace data
+- `qc policy-search` CLI command
+
+### Quantum-Inspired Role
+
+QUBO/SA searches over the policy DSL space, not individual object selection.
+This is where quadratic interactions (co-access, purge-group) become useful:
+they inform which policy configurations handle correlated access patterns.
+
+---
+
+## Phase D — Vendor-Native Compiler
+
+**Goal:** Generate deployable cache configurations for real CDN providers
+
+### First Target: Cloudflare
+
+- Policy IR → Cloudflare Cache Rules JSON
+- Policy IR → Cloudflare Workers script (edge admission logic)
+- `qc compile --target cloudflare` CLI command
+
+### Future Targets
+
+- Fastly VCL / Compute
+- CloudFront Functions / Lambda@Edge
+- Akamai Property Manager / EdgeWorkers
+
+---
+
+## Phase E — Multi-Vendor + Quantum
+
+**Goal:** Cross-CDN optimization and quantum hardware experiments
+
+### Deliverables
+
+- Cross-CDN policy comparison (same IR, different targets)
+- IBM Quantum / Amplify adapter for policy search
+- Classical vs quantum solver comparison
+- Multi-tier cache planning (edge → regional → origin)
 
 ---
 
 ## Publication Timeline
 
-| Phase | Blog/Paper | QUBO mention |
-|-------|-----------|-------------|
-| V1.0 | "CDN Cache Optimization as Economic Knapsack" | 最後に1段落だけ |
-| V1.5 | "Trace Replay: LRU/GDSF/Belady比較" | なし |
-| V2.0 | "Why QUBO: Quadratic Terms for Cache Co-access" | 主題 |
-| V3.0 | "Classical vs Quantum QUBO for CDN Optimization" | 主題 |
+| Phase | Blog/Paper | Focus |
+|-------|-----------|-------|
+| A | "GDSF Scores Negative: Why Hit Rate Isn't Enough" | Economic evaluation finding |
+| B | "Policy IR: A Unified Language for Cache Configuration" | DSL design |
+| C | "Quantum-Inspired Policy Search for CDN Caching" | SA/QUBO over DSL |
+| D | "From Trace to Cloudflare Rules: Automated Cache Configuration" | Vendor compiler |
