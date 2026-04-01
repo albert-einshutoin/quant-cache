@@ -37,7 +37,7 @@ impl Default for SyntheticConfig {
         Self {
             num_objects: 10_000,
             num_requests: 1_000_000,
-            zipf_alpha: 0.8,
+            zipf_alpha: 0.6,
             size_log_mu: 10.0,
             size_log_sigma: 2.0,
             update_rate_lambda: 0.01,

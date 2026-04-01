@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use qc_model::scenario::FreshnessModel;
-use qc_simulate::baselines::{GdsfPolicy, LruPolicy, StaticPolicy};
+use qc_simulate::baselines::{GdsfPolicy, LruPolicy, S3FifoPolicy, SievePolicy, StaticPolicy};
 use qc_simulate::comparator::Comparator;
 use qc_simulate::engine::{CachePolicy, ReplayEconConfig};
 use qc_simulate::synthetic;
@@ -115,9 +115,12 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
 
     let mut lru = LruPolicy::new(config.capacity_bytes);
     let mut gdsf = GdsfPolicy::new(config.capacity_bytes);
+    let mut sieve = SievePolicy::new(config.capacity_bytes);
+    let mut s3fifo = S3FifoPolicy::new(config.capacity_bytes);
     let mut economic = StaticPolicy::new(greedy_keys);
 
-    let mut policies: Vec<&mut dyn CachePolicy> = vec![&mut lru, &mut gdsf, &mut economic];
+    let mut policies: Vec<&mut dyn CachePolicy> =
+        vec![&mut lru, &mut gdsf, &mut sieve, &mut s3fifo, &mut economic];
 
     // Optional Belady
     let mut belady_policy;

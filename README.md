@@ -194,7 +194,7 @@ medium = 0.05
 |--------|-----|------------|-------|
 | GreedySolver | Default (`--solver greedy`) | O(n log n) | Ratio + pure-benefit dual strategy |
 | ExactIlpSolver | Verification (`--solver ilp`) | Exact | HiGHS backend, n < 10,000 |
-| SimulatedAnnealingSolver | QUBO (`--solver sa`) | Metaheuristic | Co-access quadratic terms |
+| SimulatedAnnealingSolver | Quadratic SA (`--solver sa`) | Metaheuristic | Co-access quadratic terms |
 
 ### V1 Performance
 
@@ -255,7 +255,7 @@ shielding — optimizations that have no equivalent in classical cache heuristic
 | **V1.0** (current) | Economic knapsack + trace replay evaluation |
 | V1.1 | CloudFront/Cloudflare log import + real trace validation |
 | V1.5 | Belady baseline, offline coefficient calibration |
-| V2.0 | QUBO with quadratic terms (co-access, purge-group, origin-group) |
+| V2.0 | Quadratic constrained SA with co-access interactions |
 | V2.5 | CDN provider API integration |
 | V3.0 | Quantum backend experiments |
 

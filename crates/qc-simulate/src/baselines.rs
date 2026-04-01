@@ -480,3 +480,254 @@ impl CachePolicy for BeladyPolicy {
         result
     }
 }
+
+// ── SIEVE (NSDI 2024 Best Paper) ────────────────────────────────────
+
+/// SIEVE eviction policy: FIFO queue + visited bit + hand pointer.
+///
+/// On hit: set visited=1 (lazy promotion, no queue reorder).
+/// On eviction: hand scans for first unvisited object, evicts it.
+/// Ref: Zhang et al., "SIEVE is Simpler than LRU", NSDI 2024.
+pub struct SievePolicy {
+    capacity_bytes: u64,
+    used_bytes: u64,
+    /// Objects in insertion order. Each entry: (cache_key, size, visited).
+    queue: VecDeque<(String, u64, bool)>,
+    /// Fast lookup: cache_key → index in queue.
+    index: HashMap<String, usize>,
+    /// Hand position for eviction scan.
+    hand: usize,
+}
+
+impl SievePolicy {
+    pub fn new(capacity_bytes: u64) -> Self {
+        Self {
+            capacity_bytes,
+            used_bytes: 0,
+            queue: VecDeque::new(),
+            index: HashMap::new(),
+            hand: 0,
+        }
+    }
+
+    fn evict_until_fits(&mut self, needed: u64) {
+        while self.used_bytes + needed > self.capacity_bytes && !self.queue.is_empty() {
+            // Scan from hand position for an unvisited object
+            let len = self.queue.len();
+            let mut scanned = 0;
+            while scanned < len {
+                let pos = self.hand % len;
+                if !self.queue[pos].2 {
+                    // Evict this unvisited object
+                    let (key, size, _) = self.queue.remove(pos).unwrap();
+                    self.index.remove(&key);
+                    self.used_bytes -= size;
+                    // Rebuild indices after removal
+                    self.rebuild_index();
+                    if self.hand > 0 && pos < self.hand {
+                        self.hand -= 1;
+                    }
+                    self.hand %= self.queue.len().max(1);
+                    break;
+                } else {
+                    // Reset visited bit and advance hand
+                    self.queue[pos].2 = false;
+                    self.hand = (self.hand + 1) % len;
+                }
+                scanned += 1;
+            }
+            if scanned == len {
+                // All visited — evict at hand (after resetting all)
+                let pos = self.hand % self.queue.len().max(1);
+                if let Some((key, size, _)) = self.queue.remove(pos) {
+                    self.index.remove(&key);
+                    self.used_bytes -= size;
+                    self.rebuild_index();
+                    self.hand = 0;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn rebuild_index(&mut self) {
+        self.index.clear();
+        for (i, (key, _, _)) in self.queue.iter().enumerate() {
+            self.index.insert(key.clone(), i);
+        }
+    }
+}
+
+impl CachePolicy for SievePolicy {
+    fn name(&self) -> &str {
+        "SIEVE"
+    }
+
+    fn on_request(&mut self, event: &RequestTraceEvent) -> CacheOutcome {
+        if !event.eligible_for_cache {
+            return CacheOutcome::Bypass;
+        }
+
+        if let Some(&idx) = self.index.get(&event.cache_key) {
+            // Hit: set visited = true (lazy promotion)
+            self.queue[idx].2 = true;
+            CacheOutcome::Hit
+        } else {
+            // Miss: insert at tail
+            let size = event.object_size_bytes;
+            if size > self.capacity_bytes {
+                return CacheOutcome::Miss;
+            }
+            self.evict_until_fits(size);
+            let idx = self.queue.len();
+            self.queue.push_back((event.cache_key.clone(), size, false));
+            self.index.insert(event.cache_key.clone(), idx);
+            self.used_bytes += size;
+            CacheOutcome::Miss
+        }
+    }
+}
+
+// ── S3-FIFO (SOSP 2023) ────────────────────────────────────────────
+
+/// S3-FIFO: three static FIFO queues with quick demotion.
+///
+/// Small (10%): probationary. Objects enter here.
+/// Main (90%): promoted from Small on hit.
+/// Ghost: metadata-only for recently evicted from Small.
+/// Ref: Yang et al., "FIFO Queues are All You Need", SOSP 2023.
+pub struct S3FifoPolicy {
+    small_capacity: u64,
+    main_capacity: u64,
+    small_used: u64,
+    main_used: u64,
+    /// Small queue: (cache_key, size, freq_counter)
+    small: VecDeque<(String, u64, u8)>,
+    /// Main queue: (cache_key, size, freq_counter)
+    main: VecDeque<(String, u64, u8)>,
+    /// Ghost set: recently evicted from Small (metadata only)
+    ghost: std::collections::HashSet<String>,
+    ghost_max: usize,
+    /// Fast lookup for cache membership
+    in_small: HashMap<String, usize>,
+    in_main: HashMap<String, usize>,
+}
+
+impl S3FifoPolicy {
+    pub fn new(capacity_bytes: u64) -> Self {
+        let small_capacity = capacity_bytes / 10; // 10%
+        let main_capacity = capacity_bytes - small_capacity; // 90%
+        Self {
+            small_capacity,
+            main_capacity,
+            small_used: 0,
+            main_used: 0,
+            small: VecDeque::new(),
+            main: VecDeque::new(),
+            ghost: std::collections::HashSet::new(),
+            ghost_max: 1000,
+            in_small: HashMap::new(),
+            in_main: HashMap::new(),
+        }
+    }
+
+    fn evict_small(&mut self) {
+        if let Some((key, size, freq)) = self.small.pop_front() {
+            self.in_small.remove(&key);
+            self.small_used -= size;
+
+            if freq > 0 {
+                // Promote to main
+                self.insert_main(&key, size);
+            } else {
+                // Quick demotion: discard (one-hit wonder)
+                self.ghost.insert(key);
+                if self.ghost.len() > self.ghost_max {
+                    if let Some(old) = self.ghost.iter().next().cloned() {
+                        self.ghost.remove(&old);
+                    }
+                }
+            }
+        }
+    }
+
+    fn evict_main(&mut self) {
+        while let Some((key, size, freq)) = self.main.pop_front() {
+            self.in_main.remove(&key);
+            self.main_used -= size;
+            if freq > 0 {
+                // Re-insert with decremented freq
+                self.main.push_back((key.clone(), size, freq - 1));
+                let idx = self.main.len() - 1;
+                self.in_main.insert(key, idx);
+                self.main_used += size;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn insert_main(&mut self, key: &str, size: u64) {
+        while self.main_used + size > self.main_capacity && !self.main.is_empty() {
+            self.evict_main();
+        }
+        let idx = self.main.len();
+        self.main.push_back((key.to_string(), size, 0));
+        self.in_main.insert(key.to_string(), idx);
+        self.main_used += size;
+    }
+}
+
+impl CachePolicy for S3FifoPolicy {
+    fn name(&self) -> &str {
+        "S3-FIFO"
+    }
+
+    fn on_request(&mut self, event: &RequestTraceEvent) -> CacheOutcome {
+        if !event.eligible_for_cache {
+            return CacheOutcome::Bypass;
+        }
+
+        // Check if in small queue
+        if let Some(&idx) = self.in_small.get(&event.cache_key) {
+            if idx < self.small.len() {
+                self.small[idx].2 = self.small[idx].2.saturating_add(1).min(3);
+            }
+            return CacheOutcome::Hit;
+        }
+
+        // Check if in main queue
+        if let Some(&idx) = self.in_main.get(&event.cache_key) {
+            if idx < self.main.len() {
+                self.main[idx].2 = self.main[idx].2.saturating_add(1).min(3);
+            }
+            return CacheOutcome::Hit;
+        }
+
+        // Cache miss — insert to small
+        let size = event.object_size_bytes;
+        if size > self.small_capacity + self.main_capacity {
+            return CacheOutcome::Miss;
+        }
+
+        while self.small_used + size > self.small_capacity && !self.small.is_empty() {
+            self.evict_small();
+        }
+
+        let idx = self.small.len();
+        let initial_freq = if self.ghost.contains(&event.cache_key) {
+            self.ghost.remove(&event.cache_key);
+            1 // Ghost hit → start with freq=1 (will be promoted on next eviction)
+        } else {
+            0
+        };
+
+        self.small
+            .push_back((event.cache_key.clone(), size, initial_freq));
+        self.in_small.insert(event.cache_key.clone(), idx);
+        self.small_used += size;
+
+        CacheOutcome::Miss
+    }
+}
