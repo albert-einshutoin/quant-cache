@@ -21,6 +21,9 @@ fn make_object(id: &str, size: u64, requests: u64, eligible: bool) -> ObjectFeat
         stale_penalty_class: StalePenaltyClass::Medium,
         purge_group: None,
         origin_group: None,
+        mean_reuse_distance: None,
+        reuse_distance_p50: None,
+        reuse_distance_p95: None,
     }
 }
 

@@ -92,6 +92,9 @@ fn object_features_roundtrip() {
         stale_penalty_class: StalePenaltyClass::Medium,
         purge_group: Some("products".into()),
         origin_group: Some("api-origin".into()),
+        mean_reuse_distance: None,
+        reuse_distance_p50: None,
+        reuse_distance_p95: None,
     };
     roundtrip(&obj);
 }

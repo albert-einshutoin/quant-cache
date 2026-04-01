@@ -301,6 +301,9 @@ pub fn aggregate_features(
                 stale_penalty_class: stale_class,
                 purge_group: None,
                 origin_group: None,
+                mean_reuse_distance: None,
+                reuse_distance_p50: None,
+                reuse_distance_p95: None,
             }
         })
         .collect()

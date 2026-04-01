@@ -21,6 +21,10 @@ pub struct ObjectFeatures {
     pub stale_penalty_class: StalePenaltyClass,
     pub purge_group: Option<String>,
     pub origin_group: Option<String>,
+    // V1.6 reuse distance features (optional)
+    pub mean_reuse_distance: Option<f64>,
+    pub reuse_distance_p50: Option<f64>,
+    pub reuse_distance_p95: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
