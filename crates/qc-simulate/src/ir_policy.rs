@@ -84,6 +84,10 @@ pub struct IrPolicy {
     context: IrEvalContext,
     backend: BackendInner,
     display_name: String,
+    /// Per-object TTL based on ttl_class_rules (cache_key → ttl_seconds).
+    ttl_overrides: HashMap<String, u64>,
+    /// Track insert times for TTL-based stale detection at IR level.
+    insert_times: HashMap<String, DateTime<Utc>>,
 }
 
 impl IrPolicy {
@@ -95,7 +99,39 @@ impl IrPolicy {
             context,
             backend,
             display_name,
+            ttl_overrides: HashMap::new(),
+            insert_times: HashMap::new(),
         }
+    }
+
+    /// Resolve TTL for a given content_type using ttl_class_rules.
+    /// Returns the override TTL if matched, or the default backend TTL (3600s).
+    fn resolve_ttl(&self, content_type: Option<&str>) -> u64 {
+        if let Some(ct) = content_type {
+            for rule in &self.ir.ttl_class_rules {
+                if ct.starts_with(&rule.content_type_pattern) {
+                    return rule.ttl_seconds;
+                }
+            }
+        }
+        3600 // default backend TTL
+    }
+
+    /// Build per-object TTL map from features + ttl_class_rules.
+    pub fn apply_ttl_rules(&mut self, events: &[RequestTraceEvent]) {
+        if self.ir.ttl_class_rules.is_empty() {
+            return;
+        }
+        for event in events {
+            if !self.ttl_overrides.contains_key(&event.cache_key) {
+                let ttl = self.resolve_ttl(event.content_type.as_deref());
+                self.ttl_overrides.insert(event.cache_key.clone(), ttl);
+            }
+        }
+    }
+
+    fn get_ttl(&self, cache_key: &str) -> u64 {
+        self.ttl_overrides.get(cache_key).copied().unwrap_or(3600)
     }
 
     fn build_name(ir: &PolicyIR) -> String {
@@ -124,15 +160,20 @@ impl IrPolicy {
 
     /// Pre-warm objects before replay.
     /// Creates synthetic events to insert prewarm objects into the backend.
-    pub fn prewarm(&mut self, features: &[ObjectFeatures]) {
+    /// `trace_start` should be the timestamp of the first real trace event
+    /// to avoid immediate stale detection due to TTL expiry.
+    pub fn prewarm(&mut self, features: &[ObjectFeatures], trace_start: DateTime<Utc>) {
         let feature_map: HashMap<&str, &ObjectFeatures> =
             features.iter().map(|f| (f.cache_key.as_str(), f)).collect();
+
+        // Insert prewarm objects just before trace starts
+        let prewarm_time = trace_start - chrono::Duration::seconds(1);
 
         for key in &self.ir.prewarm_set {
             if let Some(feat) = feature_map.get(key.as_str()) {
                 let event = RequestTraceEvent {
                     schema_version: "1.0".to_string(),
-                    timestamp: DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
+                    timestamp: prewarm_time,
                     object_id: feat.object_id.clone(),
                     cache_key: key.clone(),
                     object_size_bytes: feat.size_bytes,
@@ -210,9 +251,28 @@ impl CachePolicy for IrPolicy {
             return CacheOutcome::Bypass;
         }
 
-        // 2. Already in cache → delegate to backend (hit path)
+        // 2. Already in cache → check TTL stale at IR level, then delegate
         if self.backend.contains(&event.cache_key) {
-            return self.backend.on_request(event);
+            let outcome = self.backend.on_request(event);
+
+            // Apply IR-level TTL class stale check
+            if outcome == CacheOutcome::Hit {
+                if let Some(&insert_time) = self.insert_times.get(&event.cache_key) {
+                    let ttl = self.get_ttl(&event.cache_key);
+                    let age = (event.timestamp - insert_time).num_seconds();
+                    if age > ttl as i64 {
+                        // Refresh insert time on stale
+                        self.insert_times
+                            .insert(event.cache_key.clone(), event.timestamp);
+                        return CacheOutcome::StaleHit;
+                    }
+                }
+            }
+            // Track/refresh insert time on hit
+            self.insert_times
+                .entry(event.cache_key.clone())
+                .or_insert(event.timestamp);
+            return outcome;
         }
 
         // 3. Admission check
@@ -221,6 +281,10 @@ impl CachePolicy for IrPolicy {
         }
 
         // 4. Admitted → delegate to backend (insert + return Miss)
-        self.backend.on_request(event)
+        let outcome = self.backend.on_request(event);
+        // Track insert time for new objects
+        self.insert_times
+            .insert(event.cache_key.clone(), event.timestamp);
+        outcome
     }
 }

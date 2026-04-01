@@ -94,7 +94,12 @@ pub fn run(args: &PolicyEvalArgs) -> anyhow::Result<()> {
 
         let eval_ctx = IrEvalContext::from_features_and_scores(&features, &scored);
         let mut policy = IrPolicy::new(ir, eval_ctx);
-        policy.prewarm(&features);
+        let trace_start = events
+            .first()
+            .map(|e| e.timestamp)
+            .unwrap_or_else(chrono::Utc::now);
+        policy.prewarm(&features, trace_start);
+        policy.apply_ttl_rules(&events);
 
         let metrics = TraceReplayEngine::replay_with_econ(&events, &mut policy, &econ)?;
         results.push((policy.name().to_string(), metrics));
