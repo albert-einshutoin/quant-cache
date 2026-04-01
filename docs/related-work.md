@@ -195,10 +195,12 @@ TLRU (Time-Aware LRU) の freshness 制約を分析。
 
 | Version | Most Relevant Papers | What We Take |
 |---------|---------------------|-------------|
-| V1 | 12(GDSF比較), 13(survey), 14(invalidation) | 経済定式化、freshness model |
-| V1.5 | 15(PRP), 16(reuse distance), 11(ARC adaptive) | reuse distance scoring, offline calibration |
-| V2 | 1(LIRS/IRR), 2(RRIP), 5(MADQN cooperative) | co-access term, group interactions |
-| V3 | 5(distributed), 9(dynamic sizing) | distributed QUBO, variable capacity |
+| V1 | 19(GDS/GDSF), 29(Dantzig), 13(survey), 14(invalidation) | 経済定式化 = GDSF一般化 + Dantzig knapsack |
+| V1.5 | 18(Belady), 15(PRP), 16(reuse distance), 11(ARC) | Belady oracle, reuse distance, calibration |
+| V2 | 23(Lucas QUBO), 24(S3-FIFO), 25(SIEVE) | quadratic formulation, modern baselines |
+| V2.5 | 28(CacheLib), 22(AdaptSize) | production architecture, size-aware admission |
+| V3 | 23(Lucas QUBO) | quantum backend (Ising mapping) |
+| Baselines | 20(LRB), 21(TinyLFU), 26(LeCaR), 27(CACHEUS) | ML/adaptive comparisons |
 
 ---
 
@@ -223,3 +225,15 @@ TLRU (Time-Aware LRU) の freshness 制約を分析。
 | 15 | — | — | Reuse Distance-Based Probabilistic Cache Replacement | ACM TACO |
 | 16 | Keramidas, Petoumenos, Kaxiras | 2007 | Cache Replacement Based on Reuse Distance Prediction and Stream Detection | — |
 | 17 | — | 2021 | Survey on Different Cache Replacement Algorithms (Flash/SSD) | IJEAT |
+| 18 | Belady | 1966 | A Study of Replacement Algorithms for a Virtual-Storage Computer | IBM Systems Journal |
+| 19 | Cao, Irani | 1997 | Cost-Aware WWW Proxy Caching Algorithms (GDS/GDSF) | USITS |
+| 20 | Song, Berger, Li, Lloyd | 2020 | Learning Relaxed Belady for CDN Caching (LRB) | NSDI |
+| 21 | Einziger, Friedman, Manes | 2017 | TinyLFU: A Highly Efficient Cache Admission Policy | ACM TOS |
+| 22 | Berger, Sitaraman, Harchol-Balter | 2017 | AdaptSize: Orchestrating the Hot Object Memory Cache in a CDN | NSDI |
+| 23 | Lucas | 2014 | Ising Formulations of Many NP Problems (QUBO cookbook) | Frontiers in Physics |
+| 24 | Yang, Zhang, Qiu, Yue, Rashmi | 2023 | FIFO Queues are All You Need (S3-FIFO) | SOSP |
+| 25 | Zhang, Yang, Yue, Vigfusson, Rashmi | 2024 | SIEVE is Simpler than LRU | NSDI (Best Paper) |
+| 26 | Vietri et al. | 2018 | Driving Cache Replacement with ML-based LeCaR | HotStorage |
+| 27 | Rodriguez et al. | 2021 | Learning Cache Replacement with CACHEUS | FAST |
+| 28 | Berg, Berger et al. | 2020 | The CacheLib Caching Engine | OSDI |
+| 29 | Dantzig | 1957 | Discrete-Variable Extremum Problems (Knapsack) | Operations Research |
