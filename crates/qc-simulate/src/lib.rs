@@ -3,5 +3,6 @@ pub mod co_access;
 pub mod comparator;
 pub mod engine;
 pub mod error;
+pub mod ir_policy;
 pub mod reuse_distance;
 pub mod synthetic;

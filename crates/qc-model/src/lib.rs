@@ -3,6 +3,7 @@ pub mod metrics;
 pub mod object;
 pub mod origin_cost;
 pub mod policy;
+pub mod policy_ir;
 pub mod preset;
 pub mod scenario;
 pub mod trace;
