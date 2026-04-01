@@ -1,0 +1,9 @@
+capacity_bytes = 50_000_000
+time_window_seconds = 86400
+latency_value_per_ms = 0.00005
+
+[freshness_model]
+type = "TtlOnly"
+
+[freshness_model.stale_penalty]
+default_class = "high"

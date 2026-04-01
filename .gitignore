@@ -1,0 +1,31 @@
+/target
+**/*.rs.bk
+*.swp
+*.swo
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Claude Code
+.claude/
+
+# Internal dev files (not for public repo)
+history/
+paper/
+plan.md
+docs/implementation-plan.md
+docs/project-strategy.md
+
+# Data (keep samples, ignore large files)
+data/**/*.parquet
+data/**/*.gz
+!data/samples/
+
+# Python
+analysis/__pycache__/
+analysis/.ipynb_checkpoints/
+*.pyc
+*.proptest-regressions

@@ -1,0 +1,25 @@
+[package]
+name = "qc-simulate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Trace replay simulator and baselines for quant-cache"
+
+[dependencies]
+qc-model = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rand = "0.8"
+rand_distr = "0.4"
+
+[dev-dependencies]
+proptest = "1"
+qc-solver = { workspace = true }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "trace_replay"
+harness = false

@@ -1,0 +1,11 @@
+schema_version,timestamp,object_id,cache_key,object_size_bytes,response_bytes,cache_status,status_code,origin_fetch_cost,response_latency_ms,region,content_type,version_or_etag,eligible_for_cache
+1.0,2026-03-31T00:00:01Z,obj-001,/images/hero.jpg,524288,524288,Miss,200,0.001,45.2,us-east-1,image/jpeg,v1,true
+1.0,2026-03-31T00:00:02Z,obj-002,/api/products,2048,,Miss,200,0.005,12.1,us-east-1,application/json,v3,true
+1.0,2026-03-31T00:00:03Z,obj-001,/images/hero.jpg,524288,524288,Hit,200,0.001,2.1,us-east-1,image/jpeg,v1,true
+1.0,2026-03-31T00:00:04Z,obj-003,/css/main.css,32768,32768,Miss,200,0.0005,8.5,us-east-1,text/css,v2,true
+1.0,2026-03-31T00:00:05Z,obj-004,/api/auth/token,512,,Bypass,200,0.01,5.0,us-east-1,application/json,,false
+1.0,2026-03-31T00:00:06Z,obj-002,/api/products,2048,,Hit,200,0.005,1.5,us-east-1,application/json,v3,true
+1.0,2026-03-31T00:00:07Z,obj-005,/video/intro.mp4,52428800,52428800,Miss,200,0.05,250.0,us-east-1,video/mp4,v1,true
+1.0,2026-03-31T00:00:08Z,obj-001,/images/hero.jpg,524288,524288,Hit,200,0.001,1.8,us-east-1,image/jpeg,v1,true
+1.0,2026-03-31T00:00:09Z,obj-003,/css/main.css,32768,32768,Hit,200,0.0005,1.2,us-east-1,text/css,v2,true
+1.0,2026-03-31T00:00:10Z,obj-002,/api/products,2048,,Hit,200,0.005,1.3,us-east-1,application/json,v3,true

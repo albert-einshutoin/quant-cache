@@ -1,0 +1,33 @@
+[workspace]
+members = [
+    "crates/qc-model",
+    "crates/qc-solver",
+    "crates/qc-simulate",
+    "crates/qc-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/shuuto/quant-cache"
+
+[workspace.dependencies]
+# Shared dependencies
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+tracing = "0.1"
+good_lp = { version = "1.15", features = ["highs"], default-features = false }
+
+# Internal crates
+qc-model = { path = "crates/qc-model" }
+qc-solver = { path = "crates/qc-solver" }
+qc-simulate = { path = "crates/qc-simulate" }
+
+[profile.release]
+lto = true
+codegen-units = 1

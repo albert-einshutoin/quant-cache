@@ -1,0 +1,70 @@
+[schema]
+version = "1.0"
+description = "Request trace event schema for quant-cache V1"
+
+[fields.schema_version]
+type = "string"
+required = true
+description = "Schema version identifier"
+
+[fields.timestamp]
+type = "datetime"
+required = true
+format = "ISO 8601 / RFC 3339"
+
+[fields.object_id]
+type = "string"
+required = true
+description = "Logical object identifier"
+
+[fields.cache_key]
+type = "string"
+required = true
+description = "Full cache key including query params and variants"
+
+[fields.object_size_bytes]
+type = "u64"
+required = true
+
+[fields.response_bytes]
+type = "u64"
+required = false
+description = "Actual transfer size (for range requests)"
+
+[fields.cache_status]
+type = "enum"
+required = false
+values = ["Hit", "Miss", "Expired", "Bypass"]
+
+[fields.status_code]
+type = "u16"
+required = false
+description = "HTTP status code"
+
+[fields.origin_fetch_cost]
+type = "f64"
+required = false
+unit = "$/request"
+
+[fields.response_latency_ms]
+type = "f64"
+required = false
+unit = "ms"
+
+[fields.region]
+type = "string"
+required = false
+description = "V1 is single-region, optional"
+
+[fields.content_type]
+type = "string"
+required = false
+
+[fields.version_or_etag]
+type = "string"
+required = false
+
+[fields.eligible_for_cache]
+type = "bool"
+required = true
+description = "Whether this object can be cached (false for dynamic API responses)"
