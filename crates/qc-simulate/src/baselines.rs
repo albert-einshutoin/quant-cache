@@ -336,3 +336,147 @@ impl CachePolicy for GdsfPolicy {
         }
     }
 }
+
+// ── Belady (MIN) Oracle ─────────────────────────────────────────────
+
+/// Belady's optimal replacement policy (offline oracle).
+///
+/// Requires the full trace upfront to build a future-access index.
+/// On eviction, removes the object whose next access is farthest in the future.
+pub struct BeladyPolicy {
+    capacity_bytes: u64,
+    used_bytes: u64,
+    ttl_seconds: u64,
+    /// cache_key → size, insert_time, version
+    entries: HashMap<String, BeladyEntry>,
+    /// cache_key → queue of future access positions (indices into the trace)
+    future_accesses: HashMap<String, VecDeque<usize>>,
+    /// Current position in the trace
+    current_pos: usize,
+}
+
+struct BeladyEntry {
+    size: u64,
+    insert_time: DateTime<Utc>,
+    version: Option<String>,
+}
+
+impl BeladyPolicy {
+    /// Build a Belady policy from the full trace.
+    /// Must be called before replay.
+    pub fn new(events: &[RequestTraceEvent], capacity_bytes: u64) -> Self {
+        let mut future_accesses: HashMap<String, VecDeque<usize>> = HashMap::new();
+        for (i, event) in events.iter().enumerate() {
+            if event.eligible_for_cache {
+                future_accesses
+                    .entry(event.cache_key.clone())
+                    .or_default()
+                    .push_back(i);
+            }
+        }
+
+        Self {
+            capacity_bytes,
+            used_bytes: 0,
+            ttl_seconds: 3600,
+            entries: HashMap::new(),
+            future_accesses,
+            current_pos: 0,
+        }
+    }
+
+    pub fn with_ttl(mut self, ttl_seconds: u64) -> Self {
+        self.ttl_seconds = ttl_seconds;
+        self
+    }
+
+    /// Next access position for a cache_key after the current position.
+    fn next_access(&self, key: &str) -> usize {
+        if let Some(queue) = self.future_accesses.get(key) {
+            for &pos in queue {
+                if pos > self.current_pos {
+                    return pos;
+                }
+            }
+        }
+        usize::MAX // never accessed again
+    }
+
+    fn evict_until_fits(&mut self, needed: u64) {
+        while self.used_bytes + needed > self.capacity_bytes {
+            // Find the cached object whose next access is farthest
+            let victim = self
+                .entries
+                .keys()
+                .map(|k| (k.clone(), self.next_access(k)))
+                .max_by_key(|(_, next)| *next);
+
+            if let Some((key, _)) = victim {
+                if let Some(entry) = self.entries.remove(&key) {
+                    self.used_bytes -= entry.size;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl CachePolicy for BeladyPolicy {
+    fn name(&self) -> &str {
+        "Belady"
+    }
+
+    fn on_request(&mut self, event: &RequestTraceEvent) -> CacheOutcome {
+        // Consume the current position from future_accesses
+        if let Some(queue) = self.future_accesses.get_mut(&event.cache_key) {
+            while queue.front().is_some_and(|&pos| pos <= self.current_pos) {
+                queue.pop_front();
+            }
+        }
+
+        if !event.eligible_for_cache {
+            self.current_pos += 1;
+            return CacheOutcome::Bypass;
+        }
+
+        let result = if self.entries.contains_key(&event.cache_key) {
+            let stale = {
+                let entry = self.entries.get(&event.cache_key).unwrap();
+                check_stale(
+                    entry.insert_time,
+                    entry.version.as_deref(),
+                    event,
+                    self.ttl_seconds,
+                )
+            };
+            if stale {
+                if let Some(entry) = self.entries.get_mut(&event.cache_key) {
+                    entry.insert_time = event.timestamp;
+                    entry.version = event.version_or_etag.clone();
+                }
+                CacheOutcome::StaleHit
+            } else {
+                CacheOutcome::Hit
+            }
+        } else {
+            let size = event.object_size_bytes;
+            if size <= self.capacity_bytes {
+                self.evict_until_fits(size);
+                self.entries.insert(
+                    event.cache_key.clone(),
+                    BeladyEntry {
+                        size,
+                        insert_time: event.timestamp,
+                        version: event.version_or_etag.clone(),
+                    },
+                );
+                self.used_bytes += size;
+            }
+            CacheOutcome::Miss
+        };
+
+        self.current_pos += 1;
+        result
+    }
+}

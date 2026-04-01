@@ -37,6 +37,10 @@ pub struct CompareArgs {
     #[arg(long, default_value_t = false)]
     pub include_ilp: bool,
 
+    /// Include Belady oracle (optimal eviction, requires full trace pre-index)
+    #[arg(long, default_value_t = false)]
+    pub include_belady: bool,
+
     /// Output comparison JSON file
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -111,6 +115,16 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
     let mut economic = StaticPolicy::new(greedy_keys);
 
     let mut policies: Vec<&mut dyn CachePolicy> = vec![&mut lru, &mut gdsf, &mut economic];
+
+    // Optional Belady
+    let mut belady_policy;
+    if args.include_belady {
+        belady_policy = Some(qc_simulate::baselines::BeladyPolicy::new(
+            &events,
+            config.capacity_bytes,
+        ));
+        policies.push(belady_policy.as_mut().unwrap());
+    }
 
     // Optional ILP
     let ilp_result;
