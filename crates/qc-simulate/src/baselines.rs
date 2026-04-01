@@ -494,7 +494,7 @@ pub struct SievePolicy {
     /// Objects in insertion order. Each entry: (cache_key, size, visited).
     queue: VecDeque<(String, u64, bool)>,
     /// Fast lookup: cache_key → index in queue.
-    index: HashMap<String, usize>,
+    pub(crate) index: HashMap<String, usize>,
     /// Hand position for eviction scan.
     hand: usize,
 }
@@ -610,8 +610,8 @@ pub struct S3FifoPolicy {
     ghost: std::collections::HashSet<String>,
     ghost_max: usize,
     /// Fast lookup for cache membership
-    in_small: HashMap<String, usize>,
-    in_main: HashMap<String, usize>,
+    pub(crate) in_small: HashMap<String, usize>,
+    pub(crate) in_main: HashMap<String, usize>,
 }
 
 impl S3FifoPolicy {
@@ -729,5 +729,133 @@ impl CachePolicy for S3FifoPolicy {
         self.small_used += size;
 
         CacheOutcome::Miss
+    }
+}
+
+// ── Economic Admission Gate ─────────────────────────────────────────
+
+/// Economic admission gate: only admits objects with positive net benefit.
+/// Used in combination with an eviction policy (SIEVE, S3-FIFO).
+pub struct EconomicAdmission {
+    /// cache_key → net_benefit from economic scoring
+    scores: HashMap<String, f64>,
+    /// Admission threshold (objects with benefit > threshold are admitted)
+    threshold: f64,
+}
+
+impl EconomicAdmission {
+    pub fn new(scores: HashMap<String, f64>) -> Self {
+        Self {
+            scores,
+            threshold: 0.0,
+        }
+    }
+
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.threshold = threshold;
+        self
+    }
+
+    pub fn should_admit(&self, cache_key: &str) -> bool {
+        self.scores
+            .get(cache_key)
+            .is_some_and(|&b| b > self.threshold)
+    }
+}
+
+// ── EconomicAdmission + SIEVE Hybrid ────────────────────────────────
+
+/// SIEVE eviction with economic admission gate.
+/// Only admits objects that pass the economic benefit threshold.
+/// Hit handling is identical to pure SIEVE.
+pub struct EconSievePolicy {
+    admission: EconomicAdmission,
+    inner: SievePolicy,
+}
+
+impl EconSievePolicy {
+    pub fn new(scores: HashMap<String, f64>, capacity_bytes: u64) -> Self {
+        Self {
+            admission: EconomicAdmission::new(scores),
+            inner: SievePolicy::new(capacity_bytes),
+        }
+    }
+
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.admission = self.admission.with_threshold(threshold);
+        self
+    }
+}
+
+impl CachePolicy for EconSievePolicy {
+    fn name(&self) -> &str {
+        "Econ+SIEVE"
+    }
+
+    fn on_request(&mut self, event: &RequestTraceEvent) -> CacheOutcome {
+        if !event.eligible_for_cache {
+            return CacheOutcome::Bypass;
+        }
+
+        // If already cached, handle as normal SIEVE hit
+        if self.inner.index.contains_key(&event.cache_key) {
+            return self.inner.on_request(event);
+        }
+
+        // Miss: check admission gate
+        if !self.admission.should_admit(&event.cache_key) {
+            return CacheOutcome::Miss; // rejected by admission gate
+        }
+
+        // Admitted: let SIEVE handle insertion
+        self.inner.on_request(event)
+    }
+}
+
+// ── EconomicAdmission + S3-FIFO Hybrid ──────────────────────────────
+
+/// S3-FIFO eviction with economic admission gate.
+pub struct EconS3FifoPolicy {
+    admission: EconomicAdmission,
+    inner: S3FifoPolicy,
+}
+
+impl EconS3FifoPolicy {
+    pub fn new(scores: HashMap<String, f64>, capacity_bytes: u64) -> Self {
+        Self {
+            admission: EconomicAdmission::new(scores),
+            inner: S3FifoPolicy::new(capacity_bytes),
+        }
+    }
+
+    pub fn with_threshold(mut self, threshold: f64) -> Self {
+        self.admission = self.admission.with_threshold(threshold);
+        self
+    }
+}
+
+impl CachePolicy for EconS3FifoPolicy {
+    fn name(&self) -> &str {
+        "Econ+S3FIFO"
+    }
+
+    fn on_request(&mut self, event: &RequestTraceEvent) -> CacheOutcome {
+        if !event.eligible_for_cache {
+            return CacheOutcome::Bypass;
+        }
+
+        // If already in cache, handle normally
+        if self.inner.in_small.contains_key(&event.cache_key)
+            || self.inner.in_main.contains_key(&event.cache_key)
+        {
+            return self.inner.on_request(event);
+        }
+
+        // Miss: check admission gate
+        if !self.admission.should_admit(&event.cache_key) {
+            return CacheOutcome::Miss;
+        }
+
+        self.inner.on_request(event)
     }
 }

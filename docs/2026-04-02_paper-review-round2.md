@@ -100,10 +100,71 @@
 
 ## 次の開発ステップ (確定)
 
-1. `SIEVE` baseline を qc-simulate に追加
-2. `S3-FIFO` baseline を qc-simulate に追加
-3. `qc compare` に新ベースラインを載せる
-4. Synthetic Zipf α デフォルトを 0.6 に変更
-5. README/docs の SA 表現を修正
-6. α sweep による感度分析
-7. W-TinyLFU baseline (後回し)
+1. ~~`SIEVE` baseline を qc-simulate に追加~~ ✅ Done
+2. ~~`S3-FIFO` baseline を qc-simulate に追加~~ ✅ Done
+3. ~~`qc compare` に新ベースラインを載せる~~ ✅ Done
+4. ~~Synthetic Zipf α デフォルトを 0.6 に変更~~ ✅ Done
+5. ~~README/docs の SA 表現を修正~~ ✅ Done
+6. Admission gate 設計と threshold calibration → V2.5
+7. W-TinyLFU baseline → V2.5
+
+---
+
+## Reviewer Feedback (2026-04-02 追記)
+
+### 指摘内容
+
+> EconomicGreedy は Hit%, ByteHit%, CostSavings$, Objective$ の全てで
+> SIEVE/S3-FIFO に負けている。「何を最適化したいのか」は正しくなったが、
+> 「その目的でも勝てているのか」はまだ別問題。
+
+### 根本原因分析
+
+EconomicGreedy は **static offline policy**（固定集合を選択）。
+SIEVE/S3-FIFO は **online adaptive policy**（動的に evict/admit）。
+容量 1MB で 500 objects のうち 58 個しか固定選択できない。
+SIEVE は時間とともに 200+ objects をローテーションできる。
+→ 構造的に static policy が online policy に勝てない。
+
+### Codex との議論結果
+
+**Option A を採用: Economic Scoring を Admission Policy として再定義**
+
+- quant-cache の強みは「which objects are economically worth caching」の判定
+- 弱みは「when to evict / rotate」の時間適応
+- → admission gate + SIEVE/S3-FIFO eviction のハイブリッド
+
+### 実装状況
+
+- `EconomicAdmission` gate: 実装済み
+- `EconSievePolicy` / `EconS3FifoPolicy`: 実装済み
+- ただし **threshold=0（全通過）では pure SIEVE と同一結果**
+- **threshold > 0 では admission が厳しすぎて hit rate/objective が低下**
+
+### 今後の課題
+
+admission threshold の最適設計は V2.5 課題として保留。
+現時点では:
+- SIEVE/S3-FIFO 自体が強い one-hit-wonder filter を内蔵
+- Economic admission が上乗せで価値を出すには、workload 特性への適合が必要
+- threshold calibration (train/val split) が必要
+
+### 実験結果の見せ方 (レビュワー指摘対応)
+
+| Approach | Status |
+|----------|--------|
+| EconomicGreedy が勝つ条件を明示する | 静的 prewarm/prefetch ユースケースで有効 |
+| 平均/中央値/勝率で出す | 20-seed sweep を基本にする |
+| Objective$ の定義を明確化する | docs に数式を記載 |
+| 負けるケースを分析として見せる | static vs online の構造差として説明 |
+
+### 正直な位置づけ
+
+現時点の quant-cache の価値は:
+1. **経済目的関数の定式化** — hit rate ではなく $/period で評価する枠組み
+2. **ILP による最適性検証** — greedy がどれだけ optimal に近いかを定量化
+3. **再現可能な trace replay 評価基盤** — SIEVE/S3-FIFO/GDSF を同一条件で比較
+4. **GDSF の objective 弱点を可視化** — GDSF は hit rate は高いが stale penalty で objective が大幅マイナス
+
+runtime eviction policy としては SIEVE/S3-FIFO が優位。
+quant-cache の勝ち筋は admission policy / prefetch / 経済分析ツールとしての位置づけ。

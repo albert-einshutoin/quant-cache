@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use clap::Args;
 
 use qc_model::scenario::FreshnessModel;
-use qc_simulate::baselines::{GdsfPolicy, LruPolicy, S3FifoPolicy, SievePolicy, StaticPolicy};
+use qc_simulate::baselines::{
+    EconS3FifoPolicy, EconSievePolicy, GdsfPolicy, LruPolicy, S3FifoPolicy, SievePolicy,
+    StaticPolicy,
+};
 use qc_simulate::comparator::Comparator;
 use qc_simulate::engine::{CachePolicy, ReplayEconConfig};
 use qc_simulate::synthetic;
@@ -90,12 +93,6 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         })
         .sum();
 
-    let greedy_keys = greedy_result
-        .decisions
-        .iter()
-        .filter(|d| d.cache)
-        .map(|d| d.cache_key.clone());
-
     // Build per-object econ config matching solver objective
     let default_class = match &config.freshness_model {
         FreshnessModel::TtlOnly { stale_penalty } => stale_penalty.default_class,
@@ -113,14 +110,41 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         _ => ReplayEconConfig::from_features(&features, config.latency_value_per_ms, default_class),
     };
 
+    // Build admission scores: benefit per byte (efficiency).
+    // Use net_benefit/size — objects with high economic density are admitted.
+    let admission_scores: std::collections::HashMap<String, f64> = scored
+        .iter()
+        .map(|s| {
+            let eff = if s.size_bytes > 0 {
+                s.net_benefit / s.size_bytes as f64
+            } else {
+                0.0
+            };
+            (s.cache_key.clone(), eff)
+        })
+        .collect();
+
+    // Admission threshold: 0 = admit all objects with positive efficiency.
+    // TODO: V2.5 — threshold calibration via validation trace.
+    let threshold = 0.0;
+
     let mut lru = LruPolicy::new(config.capacity_bytes);
     let mut gdsf = GdsfPolicy::new(config.capacity_bytes);
     let mut sieve = SievePolicy::new(config.capacity_bytes);
     let mut s3fifo = S3FifoPolicy::new(config.capacity_bytes);
-    let mut economic = StaticPolicy::new(greedy_keys);
+    let mut econ_sieve = EconSievePolicy::new(admission_scores.clone(), config.capacity_bytes)
+        .with_threshold(threshold);
+    let mut econ_s3fifo =
+        EconS3FifoPolicy::new(admission_scores, config.capacity_bytes).with_threshold(threshold);
 
-    let mut policies: Vec<&mut dyn CachePolicy> =
-        vec![&mut lru, &mut gdsf, &mut sieve, &mut s3fifo, &mut economic];
+    let mut policies: Vec<&mut dyn CachePolicy> = vec![
+        &mut lru,
+        &mut gdsf,
+        &mut sieve,
+        &mut s3fifo,
+        &mut econ_sieve,
+        &mut econ_s3fifo,
+    ];
 
     // Optional Belady
     let mut belady_policy;
