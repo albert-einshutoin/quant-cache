@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
 
 mod commands;
+mod providers;
 
-use commands::{compare, generate, optimize, simulate};
+use commands::{compare, generate, import, optimize, simulate};
 
 #[derive(Parser)]
 #[command(name = "qc")]
@@ -15,6 +16,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Import CDN provider logs into canonical trace format
+    Import(import::ImportArgs),
     /// Generate synthetic trace data
     Generate(generate::GenerateArgs),
     /// Optimize cache policy from trace data
@@ -36,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        Commands::Import(args) => import::run(args),
         Commands::Generate(args) => generate::run(args),
         Commands::Optimize(args) => optimize::run(args),
         Commands::Simulate(args) => simulate::run(args),
