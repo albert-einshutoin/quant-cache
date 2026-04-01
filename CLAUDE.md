@@ -2,14 +2,19 @@
 
 ## What This Is
 
-CDN cache optimization engine. Formulates cache admission as a 0-1 knapsack
-problem with economic objective ($/period). Rust workspace with 4 crates.
+Economic cache decision framework for CDN operators. Evaluates cache policies
+through an economic objective ($/period) that unifies latency, origin cost,
+and freshness penalties. **Not** a replacement for eviction policies (SIEVE, S3-FIFO) —
+it is a decision/evaluation layer and admission policy foundation.
+
+Key insight: GDSF achieves highest hit rate but scores **negative on economic
+objective** due to stale penalties. This is invisible without explicit economic modeling.
 
 ## Build & Test
 
 ```bash
-cargo test --workspace                          # 75 regular tests
-cargo test --release --workspace -- --ignored   # 5 acceptance + perf guards
+cargo test --workspace                          # 80+ regular tests
+cargo test --release --workspace -- --ignored   # acceptance + perf guards
 cargo clippy --all-targets -- -D warnings       # must be clean
 cargo fmt --check                               # must pass
 ```
@@ -29,25 +34,25 @@ Scoring and solving are separated:
 
 ## Key Files
 
-- `crates/qc-solver/src/score.rs` — scoring formula (the economic core)
-- `crates/qc-solver/src/greedy.rs` — greedy solver (dual ratio + pure-benefit)
-- `crates/qc-solver/src/qubo.rs` — QUBO types + simulated annealing solver
+- `crates/qc-solver/src/score.rs` — economic scoring formula (the core value proposition)
+- `crates/qc-solver/src/greedy.rs` — greedy knapsack solver
+- `crates/qc-solver/src/qubo.rs` — quadratic SA solver (co-access interactions)
 - `crates/qc-solver/src/calibrate.rs` — coefficient calibration (coordinate descent)
-- `crates/qc-simulate/src/co_access.rs` — time-window co-occurrence extraction
-- `crates/qc-simulate/src/reuse_distance.rs` — stack distance computation
+- `crates/qc-simulate/src/engine.rs` — trace replay with per-object economic evaluation
+- `crates/qc-simulate/src/baselines.rs` — LRU, GDSF, SIEVE, S3-FIFO, Belady, EconAdmission hybrids
+- `crates/qc-simulate/src/synthetic.rs` — trace generator (Zipf α default: 0.6)
+- `crates/qc-simulate/src/co_access.rs` — co-occurrence extraction for quadratic terms
 - `crates/qc-cli/src/providers/cloudfront.rs` — CloudFront log parser
-- `crates/qc-simulate/src/engine.rs` — trace replay with per-object stale penalty
-- `crates/qc-simulate/src/baselines.rs` — LRU, GDSF, StaticPolicy with stale detection
-- `crates/qc-simulate/src/synthetic.rs` — trace generator + feature aggregation
-- `crates/qc-model/src/scenario.rs` — config types (FreshnessModel, StaleCostOverrides)
 
 ## Important Design Decisions
 
-- `FreshnessModel` is an enum (TTL-Only XOR InvalidationOnUpdate) to prevent double-counting
-- Stale penalty costs are per-object via `StalePenaltyClass`, overridable via `StaleCostOverrides`
-- `PolicyFile` JSON includes `SolverMetadata` for `simulate` to restore diagnostics
-- EconomicGreedy is static/offline — structurally different from online LRU/GDSF
-- Trace events carry `version_or_etag` for version-mismatch stale detection
+- quant-cache is an **evaluation framework and admission optimizer**, not an eviction policy
+- EconomicGreedy (static offline) is a reference optimizer, not the primary product
+- SIEVE/S3-FIFO are the runtime eviction baselines (2023-2024 SOTA)
+- `FreshnessModel` enum prevents stale/invalidation double-counting
+- Per-object `StalePenaltyClass` with configurable overrides
+- `ReplayEconConfig` mirrors solver objective in replay for fair comparison
+- Zipf α=0.6 default based on CacheLib production findings (α=0.3-0.7)
 
 ## Conventions
 

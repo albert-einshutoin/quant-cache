@@ -164,30 +164,39 @@ TLRU (Time-Aware LRU) の freshness 制約を分析。
 
 ---
 
-## 6. Novelty of quant-cache
+## 6. Positioning of quant-cache
 
-### 既存手法との差別化
+### What quant-cache is NOT
 
-| Approach | Type | Strength | Limitation |
-|----------|------|----------|------------|
-| GDSF | Online priority | Cost-aware, simple | Local greedy, no global optimization |
-| ARC | Online adaptive | Self-tuning, O(1) | No economic objective |
-| Catcher/PARROT | Offline learning | Highest hit rates | Training cost, black-box |
-| **quant-cache V1** | **Offline optimization** | **Near-optimal with ILP verification, interpretable, constraint-aware** | **Static, no online adaptation** |
-| **quant-cache V2** | **Quadratic optimization** | **Pairwise interactions (co-access, grouping)** | **Scalability for large n** |
+quant-cache is not a better universal eviction policy. SIEVE (2024) and S3-FIFO (2023)
+are superior for runtime eviction, and quant-cache does not attempt to replace them.
 
-### quant-cache が埋めるギャップ
+### What quant-cache IS
 
-文献にはこのギャップが存在する:
+An **economic cache decision framework** that:
 
-> **Formal constrained optimization for CDN cache policy with explicit economic
-> objective, freshness-aware cost terms, and reproducible trace-based evaluation.**
+1. **Evaluates** cache policies through an economic objective ($/period) that reveals
+   costs invisible to hit-rate-only metrics
+2. **Identifies** which objects are economically worth caching, with interpretable
+   per-object score breakdowns
+3. **Verifies** optimization quality via ILP (bounded optimality gap)
+4. **Composes** with eviction policies as an admission layer (future V2.5)
 
-1. GDSF は近いが、制約なし・局所的
-2. ML/DRL は強いが、non-interpretable・高コスト
-3. 理論解析は性能予測のみで、政策生成しない
-4. V2 の pairwise interaction (co-access, purge-group, origin-group) は、
-   我々の知る限り、既存のキャッシュ政策文献で明示的に定式化されていない
+### 既存手法との位置づけ
+
+| Approach | Role | quant-cache の関係 |
+|----------|------|-------------------|
+| SIEVE / S3-FIFO | Runtime eviction (2023-2024 SOTA) | Baseline; future eviction backend |
+| GDSF | Cost-aware eviction | Hit rate 最高だが **経済目的で負** (stale penalty) |
+| TinyLFU / AdaptSize | Admission control | quant-cache は経済的 admission の一形態 |
+| LRB / CACHEUS | ML-based eviction | 高性能だが non-interpretable |
+| **quant-cache** | **Economic evaluation + admission** | 経済目的の定式化・評価・解釈が差別化 |
+
+### Key Finding
+
+GDSF achieves the highest hit rate (44%) but scores **-133$ on economic objective**
+(20-seed mean). SIEVE scores **+393$**. This demonstrates that hit-rate optimization
+and economic optimization can diverge significantly when freshness costs are high.
 
 ---
 

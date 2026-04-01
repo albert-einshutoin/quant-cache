@@ -1,164 +1,103 @@
 # quant-cache
 
-Economic CDN cache optimization engine powered by constrained optimization.
+An economic cache decision framework for CDN operators.
 
-quant-cache selects which objects to cache by solving a **0-1 knapsack problem**
-that maximizes expected economic benefit (latency savings + origin cost reduction)
-under cache capacity and freshness constraints. Unlike heuristic-based policies
-(LRU, GDSF), it formulates cache admission as an explicit optimization problem
-with a well-defined objective function in $/period.
+quant-cache evaluates cache policies through an **economic objective function** ($/period)
+that unifies latency savings, origin cost reduction, and freshness penalties into a single
+metric. It reveals hidden costs that hit-rate-only evaluation misses — for example, GDSF
+achieves the highest hit rate but scores **negative on economic objective** due to stale
+content penalties.
+
+quant-cache is not a replacement for eviction policies like SIEVE or S3-FIFO.
+It is a **decision and evaluation layer** that answers:
+- Which objects are economically worth caching?
+- How does your cache policy perform when freshness costs are accounted for?
+- How close is your greedy heuristic to the mathematical optimum?
+
+## Key Finding
+
+Evaluated across 20 synthetic traces (Zipf α=0.6, 500 objects, 50k requests):
+
+| Policy | Objective$ (mean) | Hit% (mean) | CostSavings$ (mean) |
+|--------|-------------------|-------------|---------------------|
+| **SIEVE** | **392.57** | 36.4% | 361.74 |
+| S3-FIFO | 380.48 | 35.1% | 350.79 |
+| LRU | 324.90 | 35.0% | 349.66 |
+| **GDSF** | **-133.19** | **44.1%** | **562.64** |
+
+GDSF has the highest hit rate and cost savings, but its **economic objective is deeply
+negative** because it caches high-update-rate objects that incur stale penalties.
+This kind of insight is invisible without an explicit economic model.
 
 ## Quick Start
 
 ```bash
-# Build
 cargo build --workspace --release
 
-# 1. Generate a synthetic trace (10k objects, 1M requests)
+# Generate a synthetic trace
 qc generate --num-objects 10000 --num-requests 1000000 --output trace.csv
 
-# 2. Optimize cache policy
-qc optimize --input trace.csv --output policy.json \
-  --capacity 50000000 --preset ecommerce
-
-# 3. Replay trace against the optimized policy
-qc simulate --input trace.csv --policy policy.json
-
-# 4. Compare against LRU and GDSF baselines
+# Compare policies with economic evaluation
 qc compare --input trace.csv --capacity 50000000 --preset ecommerce
 
-# 5. Include ILP for optimality gap measurement (slow for large n)
-qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-ilp
+# Import real CloudFront logs
+qc import --provider cloudfront --input access.log --output trace.csv
+
+# Optimize: find the economically optimal cache set
+qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset ecommerce
+
+# Calibrate economic parameters
+qc calibrate --train train.csv --validation val.csv --capacity 50000000
 ```
 
-Detailed usage:
+## What It Does
 
-- [docs/usage-guide.md](/Users/shutoide/Developer/quant-cache/docs/usage-guide.md)
+### 1. Economic Scoring
 
-## How It Works
-
-```
-Trace (CSV) → aggregate → ObjectFeatures
-                              │
-                    BenefitCalculator (score.rs)
-                              │
-                        ScoredObject[]
-                              │
-               ┌──────────────┴──────────────┐
-          GreedySolver                  ExactIlpSolver
-          O(n log n)                    Exact (n < 10k)
-               │                              │
-          PolicyDecision[]               PolicyDecision[]
-               │                              │
-          TraceReplayEngine ◄─────────────────┘
-               │
-          MetricsSummary (hit ratio, cost savings, objective value, stale rate)
-```
-
-### Scoring Formula
-
-For each object *i* over time window *T*:
+For each cached object, compute expected economic benefit over time window T:
 
 ```
-benefit_i = E[requests_i] × (latency_saving_i × λ_latency + origin_cost_i)
-
-freshness_cost_i =
-  TTL-Only:    E[requests_i] × (1 - e^(-update_rate_i × ttl_i)) × stale_penalty_i
-  Invalidation: update_rate_i × T × invalidation_cost
-
-net_benefit_i = benefit_i - freshness_cost_i
+benefit  = E[requests] × (latency_saving × λ_latency + origin_cost)
+freshness_cost = E[requests] × P(stale) × stale_penalty    (TTL-Only model)
+net_benefit = benefit - freshness_cost
 ```
 
-The solver maximizes `Σ net_benefit_i × x_i` subject to `Σ size_i × x_i ≤ capacity`.
+All terms are in $/period. This makes cost/benefit comparable across objects with
+different sizes, access patterns, and update frequencies.
 
-## Architecture
+### 2. Replay Evaluation
 
-```
-quant-cache/
-├── crates/
-│   ├── qc-model/        Data types, configs, presets, error types
-│   ├── qc-solver/       BenefitCalculator, GreedySolver, ExactIlpSolver
-│   ├── qc-simulate/     TraceReplayEngine, LRU/GDSF baselines, synthetic generator
-│   └── qc-cli/          CLI (import, generate, optimize, simulate, compare, calibrate)
-├── data/
-│   ├── samples/         Sample trace CSV and TOML config
-│   └── schemas/         Trace event schema definition
-└── docs/                Design documents, strategy, related work
-```
+Replay traces against multiple policies (LRU, GDSF, SIEVE, S3-FIFO, Belady) and
+measure both traditional metrics (hit rate, byte hit rate) and economic objective
+(incorporating latency value and per-object stale penalties).
+
+### 3. Bounded Optimality
+
+Solve the 0-1 knapsack with GreedySolver (O(n log n)) and verify against ExactIlpSolver.
+Observed optimality gap: **median 0.01%, p95 0.72%** (n=1000, 50 cases).
 
 ## CLI Commands
 
-### `qc import`
+| Command | Description |
+|---------|-------------|
+| `qc import` | Convert CDN provider logs (CloudFront) to canonical trace CSV |
+| `qc generate` | Generate synthetic traces with configurable distributions |
+| `qc optimize` | Find economically optimal cache set (greedy, ILP, or SA solver) |
+| `qc simulate` | Replay trace against a saved policy |
+| `qc compare` | Compare LRU, GDSF, SIEVE, S3-FIFO side-by-side with economic metrics |
+| `qc calibrate` | Auto-tune economic parameters using train/validation split |
 
-Import CDN provider logs into canonical trace format.
+## Baselines
 
-```bash
-qc import --provider cloudfront --input access.log --output trace.csv
-qc import --provider cloudfront --input access.log --output trace.csv --cost-config costs.toml
-```
-
-### `qc generate`
-
-Generate synthetic trace data with configurable distributions.
-
-```bash
-qc generate --num-objects 10000 --num-requests 1000000 \
-  --zipf-alpha 0.8 --seed 42 --output trace.csv
-```
-
-### `qc optimize`
-
-Score objects and solve the knapsack to produce a cache policy.
-
-```bash
-# Using a preset
-qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset ecommerce
-
-# Using a TOML config file
-qc optimize --input trace.csv --output policy.json --config scenario.toml
-
-# Using ILP solver for exact solution
-qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset ecommerce --solver ilp
-
-# Using SA solver with QUBO (co-access quadratic terms)
-qc optimize --input trace.csv --output policy.json --capacity 50000000 --solver sa --co-access-window-ms 5000
-```
-
-### `qc simulate`
-
-Replay a trace against a saved policy and report metrics.
-
-```bash
-qc simulate --input trace.csv --policy policy.json --output metrics.json
-```
-
-### `qc calibrate`
-
-Automatically tune economic parameters using train/validation traces.
-
-```bash
-qc calibrate --train train.csv --validation val.csv --capacity 50000000 --restarts 3
-```
-
-### `qc compare`
-
-Compare EconomicGreedy against LRU, GDSF, and optionally Belady/ILP baselines.
-
-```bash
-qc compare --input trace.csv --capacity 50000000 --preset ecommerce
-qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-ilp
-qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-belady
-```
-
-Output:
-
-```
-Policy                     Hit%     ByteHit%   CostSavings$     Objective$
----------------------------------------------------------------------------
-LRU                      50.38%       42.82%       1511.3610       1284.2800
-GDSF                     72.53%       43.47%       2175.9540       1205.3400
-EconomicGreedy           72.45%       17.89%       2173.6410       1397.2500
-```
+| Policy | Type | Source |
+|--------|------|--------|
+| LRU | Online eviction | Classic |
+| GDSF | Online eviction (cost-aware) | Cao & Irani, 1997 |
+| SIEVE | Online eviction (lazy promotion) | Zhang et al., NSDI 2024 (Best Paper) |
+| S3-FIFO | Online eviction (3-queue) | Yang et al., SOSP 2023 |
+| Belady | Offline oracle (future knowledge) | Belady, 1966 |
+| EconomicGreedy | Offline knapsack selection | quant-cache (Dantzig, 1957) |
+| ExactILP | Offline optimal | HiGHS solver |
 
 ## Presets
 
@@ -166,114 +105,53 @@ EconomicGreedy           72.45%       17.89%       2173.6410       1397.2500
 |--------|----------|-------------------|---------------|
 | `ecommerce` | Product pages, catalogs | 0.00005 | High ($0.10/event) |
 | `media` | Video/image streaming | 0.00001 | Low ($0.001/event) |
-| `api` | REST APIs, auth tokens | 0.0001 | InvalidationOnUpdate ($0.001/event) |
+| `api` | REST APIs, auth tokens | 0.0001 | InvalidationOnUpdate |
 
-Stale penalty costs are configurable via `StaleCostOverrides` in TOML config.
+Stale penalty costs are configurable per class via `StaleCostOverrides` in TOML config.
 
-## TOML Config Example
+## Architecture
 
-```toml
-capacity_bytes = 50_000_000
-time_window_seconds = 86400
-latency_value_per_ms = 0.00005
-
-[freshness_model]
-type = "TtlOnly"
-
-[freshness_model.stale_penalty]
-default_class = "high"
-
-[freshness_model.stale_penalty.cost_overrides]
-high = 0.2    # override default $0.10 to $0.20
-medium = 0.05
+```
+quant-cache/
+├── crates/
+│   ├── qc-model/      Data types, configs, presets, economic parameters
+│   ├── qc-solver/     BenefitCalculator, GreedySolver, ExactIlpSolver, SA solver, calibration
+│   ├── qc-simulate/   Replay engine, 5 baseline policies, synthetic generator, co-access
+│   └── qc-cli/        CLI (import, generate, optimize, simulate, compare, calibrate)
+├── data/samples/      Sample traces and configs
+└── docs/              Design documents, related work (29 papers)
 ```
 
-## Solvers
+## Academic Context
 
-| Solver | Use | Complexity | Notes |
-|--------|-----|------------|-------|
-| GreedySolver | Default (`--solver greedy`) | O(n log n) | Ratio + pure-benefit dual strategy |
-| ExactIlpSolver | Verification (`--solver ilp`) | Exact | HiGHS backend, n < 10,000 |
-| SimulatedAnnealingSolver | Quadratic SA (`--solver sa`) | Metaheuristic | Co-access quadratic terms |
+quant-cache is grounded in 29 surveyed papers spanning classical algorithms (Belady, GDSF),
+modern eviction (SIEVE, S3-FIFO, TinyLFU), ML approaches (LRB, CACHEUS), optimization
+theory (Dantzig knapsack, Lucas QUBO), and production systems (CacheLib).
 
-### V1 Performance
+See [docs/related-work.md](docs/related-work.md) for the full survey.
 
-| Metric | Result | Target |
-|--------|--------|--------|
-| Greedy 10k objects | 0.6ms | < 1s |
-| Trace replay 1M events | 825ms | < 10s |
-| Optimality gap (median, n=1000) | 0.01% | < 5% |
-| Optimality gap (p95, n=1000) | 0.72% | < 10% |
+## Roadmap
 
-## Freshness Models
-
-V1 provides two mutually exclusive models to prevent double-counting:
-
-- **TTL-Only**: No active invalidation. Stale penalty accrues when cached content
-  exceeds TTL or version changes. Uses Poisson model: `P(stale) = 1 - e^(-λt)`.
-- **InvalidationOnUpdate**: Every content update triggers a purge. No stale serving.
-  Cost = `update_rate × T × cost_per_invalidation`.
+| Version | Focus | Status |
+|---------|-------|--------|
+| V1.0 | Economic knapsack + trace replay | Done |
+| V1.1 | CloudFront log import | Done |
+| V1.5 | Belady oracle, calibration | Done |
+| V2.0 | Quadratic SA, co-access | Done |
+| V2.5 | Admission gate + eviction composition | Next |
+| V3.0 | Provider API integration | Planned |
 
 ## Testing
 
 ```bash
-cargo test --workspace                                    # 80+ unit/integration/proptest tests
-cargo test --release --workspace -- --ignored             # acceptance + performance guards
-cargo bench -p qc-solver                                  # greedy solver benchmarks
-cargo bench -p qc-simulate                                # replay benchmarks
+cargo test --workspace                                # 80+ tests
+cargo test --release --workspace -- --ignored         # acceptance + perf guards
+cargo clippy --all-targets -- -D warnings             # lint
 ```
-
-### Test Categories
-
-| Category | Count | Framework |
-|----------|-------|-----------|
-| Unit tests | 15 (model) + 8 (scoring) + 7 (greedy) + 9 (ILP) | `#[test]` |
-| Integration | 16 (replay) + 12 (synthetic) | `#[test]` |
-| Property-based | 5 (solver) + 3 (simulator) | proptest |
-| Acceptance | 2 (baseline comparison) + 1 (optimality gap 50 cases) | `#[test] #[ignore]` |
-| Performance guards | 2 (greedy 10k, LRU 1M) | `#[test] #[ignore]` |
-
-## Vision
-
-quant-cache approaches CDN caching as a **formal optimization problem**, not a heuristic.
-
-Traditional cache policies (LRU, LFU, GDSF) make local, greedy decisions about what to evict.
-quant-cache asks a different question: *given full knowledge of your traffic patterns,
-what is the economically optimal set of objects to cache?*
-
-V1 solves this as a 0-1 knapsack. Future versions will introduce **quadratic interactions**
-(QUBO formulation) to model co-access patterns, purge-group consistency, and origin-group
-shielding — optimizations that have no equivalent in classical cache heuristics.
-
-> **Current status:** V1 is validated on synthetic traces.
-> Real CDN trace validation (CloudFront/Cloudflare) is the next milestone.
-
-## Roadmap
-
-| Version | Focus |
-|---------|-------|
-| **V1.0** (current) | Economic knapsack + trace replay evaluation |
-| V1.1 | CloudFront/Cloudflare log import + real trace validation |
-| V1.5 | Belady baseline, offline coefficient calibration |
-| V2.0 | Quadratic constrained SA with co-access interactions |
-| V2.5 | CDN provider API integration |
-| V3.0 | Quantum backend experiments |
-
-See [docs/roadmap.md](docs/roadmap.md) for the detailed plan.
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md) — Crate responsibilities, data flow, design decisions
-- [Formulation](docs/formulation.md) — Mathematical formulation (knapsack, Lagrangian, QUBO preview)
-- [Roadmap](docs/roadmap.md) — V1.0 → V3.0 detailed plan
-- [Related Work](docs/related-work.md) — 17 papers surveyed, positioning vs GDSF/ARC/ML
-- [V1 Design](docs/v1-design.md) — Data model, acceptance criteria, risk analysis
-- [Tech Stack](docs/tech-stack.md) — Rust crate dependencies
-- [Testing Strategy](docs/testing-strategy.md) — Test categories, critical invariants
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
