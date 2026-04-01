@@ -31,6 +31,10 @@ qc compare --input trace.csv --capacity 50000000 --preset ecommerce
 qc compare --input trace.csv --capacity 50000000 --preset ecommerce --include-ilp
 ```
 
+Detailed usage:
+
+- [docs/usage-guide.md](/Users/shutoide/Developer/quant-cache/docs/usage-guide.md)
+
 ## How It Works
 
 ```
