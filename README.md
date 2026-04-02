@@ -152,7 +152,7 @@ quant-cache/
 │   ├── qc-model/      Data types, configs, presets, economic parameters
 │   ├── qc-solver/     BenefitCalculator, GreedySolver, ExactIlpSolver, SA solver, calibration
 │   ├── qc-simulate/   Replay engine, 5 baseline policies, synthetic generator, co-access
-│   └── qc-cli/        CLI (import, generate, optimize, simulate, compare, calibrate)
+│   └── qc-cli/        CLI (10 commands: import → generate → optimize → policy-search → policy-eval → compile)
 ├── data/samples/      Sample traces and configs
 └── docs/              Design documents, related work (29 papers)
 ```
@@ -174,9 +174,9 @@ See [docs/related-work.md](docs/related-work.md) for the full survey.
 | V1.5 | Belady oracle, calibration | Done |
 | V2.0 | Quadratic SA, co-access | Done |
 | Phase B | Policy IR + IR evaluator | Done |
-| Phase C | Policy search (backend/admission/bypass/prewarm) | Partial |
-| Phase D | Cloudflare deployment scaffold | Partial |
-| Phase E | Multi-vendor + quantum backend | Planned |
+| Phase C | Policy search (all PolicyIR fields) | Done |
+| Phase D | Cloudflare + CloudFront deployment scaffolds | Done |
+| Phase E | Provider schema validation, quantum search | Planned |
 
 ## Testing
 

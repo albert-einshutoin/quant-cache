@@ -17,7 +17,7 @@ quant-cache evolves from an evaluation framework into an **economic cache contro
 
 ```text
 Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
-  done       done        partial     partial     planned
+  done       done        done        done        planned
 evaluation  Policy IR   Policy      Deployment  Multi-vendor
 framework   + evaluator search      scaffold    + quantum
 ```
@@ -207,7 +207,7 @@ struct PolicyIR {
 
 ---
 
-## Phase C — Policy Search Engine (Partial)
+## Phase C — Policy Search Engine (DONE)
 
 **Goal:** Search the policy configuration space for optimal settings
 
@@ -235,7 +235,7 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase D — Deployment Scaffold Generator (Partial)
+## Phase D — Deployment Scaffold Generator (DONE)
 
 **Goal:** Generate cache configuration scaffolds for CDN providers
 
