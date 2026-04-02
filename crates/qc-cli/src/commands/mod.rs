@@ -1,6 +1,7 @@
 pub mod calibrate;
 pub mod compare;
 pub mod compile;
+pub mod deploy_check;
 pub mod generate;
 pub mod import;
 pub mod optimize;

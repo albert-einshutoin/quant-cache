@@ -4,7 +4,8 @@ mod commands;
 mod providers;
 
 use commands::{
-    calibrate, compare, compile, generate, import, optimize, policy_eval, policy_search, simulate,
+    calibrate, compare, compile, deploy_check, generate, import, optimize, policy_eval,
+    policy_search, simulate,
 };
 
 #[derive(Parser)]
@@ -36,6 +37,8 @@ enum Commands {
     Calibrate(calibrate::CalibrateArgs),
     /// Generate deployment scaffold from PolicyIR (Cloudflare)
     Compile(compile::CompileArgs),
+    /// Pre-deploy safety check: replay PolicyIR and verify thresholds
+    DeployCheck(deploy_check::DeployCheckArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -58,5 +61,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Compare(args) => compare::run(args),
         Commands::Calibrate(args) => calibrate::run(args),
         Commands::Compile(args) => compile::run(args),
+        Commands::DeployCheck(args) => deploy_check::run(args),
     }
 }
