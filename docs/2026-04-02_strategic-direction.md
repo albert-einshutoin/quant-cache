@@ -96,8 +96,8 @@
 ### 3つの柱
 
 1. **Economic Evaluation** — hit rate だけでは見えないコストを可視化 (V1, done)
-2. **Policy Search** — DSL 空間で最良構成を探索 (V2.5)
-3. **Config Generation** — vendor-native artifact として配布 (V3)
+2. **Policy Search** — backend/admission/bypass/prewarm 空間を探索 (partial)
+3. **Deployment Scaffold** — Cloudflare deployment scaffold を生成 (partial)
 
 ### Quantum-Inspired の位置づけ
 

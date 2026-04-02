@@ -17,9 +17,9 @@ quant-cache evolves from an evaluation framework into an **economic cache contro
 
 ```text
 Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
-  done       next        planned     planned     planned
-evaluation  Policy IR   Policy      Vendor      Multi-vendor
-framework   + evaluator search      compiler    + quantum
+  done       done        partial     partial     planned
+evaluation  Policy IR   Policy      Deployment  Multi-vendor
+framework   + evaluator search      scaffold    + quantum
 ```
 
 ---
@@ -207,16 +207,28 @@ struct PolicyIR {
 
 ---
 
-## Phase C — Policy Search Engine
+## Phase C — Policy Search Engine (Partial)
 
-**Goal:** Search the policy DSL space for optimal configurations
+**Goal:** Search the policy configuration space for optimal settings
 
-### Deliverables
+### Current Status
 
-- Policy search space definition (backend × admission × bypass × prewarm)
-- SA/QUBO over the discrete policy configuration space
-- Automatic policy recommendation from trace data
-- `qc policy-search` CLI command
+`qc policy-search` searches over a **subset** of PolicyIR:
+- Backend (SIEVE / S3-FIFO)
+- Admission rule (Always / ScoreThreshold / ScoreDensityThreshold)
+- Bypass rule (None / SizeLimit / FreshnessRisk)
+- Prewarm set (top-k by score)
+
+**Not yet searched:**
+- `ttl_class_rules` (always empty in search output)
+- `cache_key_rules` (always empty)
+- Composite bypass rules (BypassRule::Any)
+
+### Remaining Work
+
+- Extend search space to include TTL class rule generation
+- SA/QUBO over the full discrete policy configuration space
+- Workload-aware rule generation (content-type → TTL mapping from trace)
 
 ### Quantum-Inspired Role
 
@@ -226,15 +238,30 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase D — Vendor-Native Compiler
+## Phase D — Deployment Scaffold Generator (Partial)
 
-**Goal:** Generate deployable cache configurations for real CDN providers
+**Goal:** Generate cache configuration scaffolds for CDN providers
 
-### First Target: Cloudflare
+### Current Status
 
-- Policy IR → Cloudflare Cache Rules JSON
-- Policy IR → Cloudflare Workers script (edge admission logic)
-- `qc compile --target cloudflare` CLI command
+`qc compile --target cloudflare` generates a **deployment scaffold**:
+- Cloudflare Cache Rules for bypass (size limit) and TTL overrides
+- Cloudflare Workers script template for admission gate
+- Prewarm URL list
+- Backend recommendation note
+
+**Limitations (not yet vendor-native):**
+- Worker script contains placeholder `ADMISSION_SCORES` (needs manual population)
+- FreshnessRisk bypass emits a comment, not a valid Cloudflare expression
+- Backend choice is advisory only (not mapped to Cloudflare settings)
+- Output requires manual review before deployment
+
+### Remaining Work
+
+- Populate Worker `ADMISSION_SCORES` from `qc optimize` output
+- Generate deployable Cloudflare API payloads (not just JSON scaffolds)
+- Add `--target fastly` (VCL/Compute) and `--target cloudfront` (Functions)
+- Validate generated config against Cloudflare API schema
 
 ### Future Targets
 

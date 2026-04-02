@@ -86,6 +86,9 @@ Observed optimality gap: **median 0.01%, p95 0.72%** (n=1000, 50 cases).
 | `qc simulate` | Replay trace against a saved policy |
 | `qc compare` | Compare LRU, GDSF, SIEVE, S3-FIFO side-by-side with economic metrics |
 | `qc calibrate` | Auto-tune economic parameters using train/validation split |
+| `qc policy-eval` | Evaluate PolicyIR configurations on traces |
+| `qc policy-search` | Search backend/admission/bypass/prewarm space for best config |
+| `qc compile` | Generate deployment scaffold (Cloudflare Cache Rules + Worker) |
 
 ## Baselines
 
@@ -138,8 +141,10 @@ See [docs/related-work.md](docs/related-work.md) for the full survey.
 | V1.1 | CloudFront log import | Done |
 | V1.5 | Belady oracle, calibration | Done |
 | V2.0 | Quadratic SA, co-access | Done |
-| V2.5 | Admission gate + eviction composition | Next |
-| V3.0 | Provider API integration | Planned |
+| Phase B | Policy IR + IR evaluator | Done |
+| Phase C | Policy search (backend/admission/bypass/prewarm) | Partial |
+| Phase D | Cloudflare deployment scaffold | Partial |
+| Phase E | Multi-vendor + quantum backend | Planned |
 
 ## Testing
 
