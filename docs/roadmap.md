@@ -249,7 +249,7 @@ they inform which policy configurations handle correlated access patterns.
 - Backend recommendation note
 
 **Current capabilities:**
-- Worker `ADMISSION_SCORES` populated from `qc optimize --scores` output
+- Worker `ADMISSION_SCORES` populated via `qc compile --scores policy.json` (reads PolicyFile from `qc optimize`)
 - FreshnessRisk bypass maps to content-type-based Cloudflare expression
 - Composite bypass rules (BypassRule::Any) fully compiled
 - TTL class rules compiled to Cloudflare cache TTL expressions
