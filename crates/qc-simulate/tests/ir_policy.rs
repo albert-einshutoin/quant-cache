@@ -184,3 +184,44 @@ fn composite_bypass_any() {
         "composite bypass should filter aggressively"
     );
 }
+
+#[test]
+fn cache_key_rules_normalize_keys() {
+    let (events, features, scored) = generate_small_trace();
+
+    // Rule: strip everything after ? (query params)
+    let ir = PolicyIR {
+        backend: Backend::Sieve,
+        capacity_bytes: 1_000_000,
+        admission_rule: AdmissionRule::Always,
+        bypass_rule: BypassRule::None,
+        prewarm_set: vec![],
+        ttl_class_rules: vec![],
+        cache_key_rules: vec![qc_model::policy_ir::CacheKeyRule {
+            pattern: r"\?.*$".to_string(),
+            replacement: "".to_string(),
+        }],
+    };
+
+    let ctx = IrEvalContext::from_features_and_scores(&features, &scored);
+    let mut policy = IrPolicy::new(ir, ctx);
+
+    // Verify: two events with same path but different query params
+    // should map to the same cache entry (second one is a hit)
+    let mut e1 = events[0].clone();
+    e1.cache_key = "/page?utm_source=google".to_string();
+    e1.eligible_for_cache = true;
+
+    let mut e2 = e1.clone();
+    e2.cache_key = "/page?utm_source=twitter".to_string();
+
+    let r1 = policy.on_request(&e1);
+    let r2 = policy.on_request(&e2);
+
+    assert_eq!(r1, CacheOutcome::Miss, "first request is a miss");
+    assert_eq!(
+        r2,
+        CacheOutcome::Hit,
+        "second request with different query params should hit (normalized to same key)"
+    );
+}

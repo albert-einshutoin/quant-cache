@@ -4,7 +4,9 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use qc_model::object::ScoredObject;
-use qc_model::policy_ir::{AdmissionRule, Backend, BypassRule, PolicyIR, TtlClassRule};
+use qc_model::policy_ir::{
+    AdmissionRule, Backend, BypassRule, CacheKeyRule, PolicyIR, TtlClassRule,
+};
 
 use crate::error::SolverError;
 
@@ -217,6 +219,31 @@ where
             vec![]
         };
 
+        // Cache key rules: common normalization patterns
+        let key_rule_candidates: Vec<Vec<CacheKeyRule>> = vec![
+            vec![], // no rules
+            vec![CacheKeyRule {
+                pattern: r"[?&]utm_[^&]*".to_string(),
+                replacement: "".to_string(),
+            }],
+            vec![CacheKeyRule {
+                pattern: r"[?&]fbclid=[^&]*".to_string(),
+                replacement: "".to_string(),
+            }],
+            vec![
+                CacheKeyRule {
+                    pattern: r"[?&]utm_[^&]*".to_string(),
+                    replacement: "".to_string(),
+                },
+                CacheKeyRule {
+                    pattern: r"[?&]fbclid=[^&]*".to_string(),
+                    replacement: "".to_string(),
+                },
+            ],
+        ];
+        let cache_key_rules =
+            key_rule_candidates[rng.gen_range(0..key_rule_candidates.len())].clone();
+
         let ir = PolicyIR {
             backend,
             capacity_bytes: config.capacity_bytes,
@@ -224,7 +251,7 @@ where
             bypass_rule,
             prewarm_set,
             ttl_class_rules,
-            cache_key_rules: vec![],
+            cache_key_rules,
         };
 
         if let Ok(obj) = eval_fn(&ir) {

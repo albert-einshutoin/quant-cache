@@ -220,13 +220,12 @@ struct PolicyIR {
 - Prewarm set (top-k by score)
 - TTL class rules (content-type prefix → TTL from trace-observed types)
 
-**Not yet searched:**
-- `cache_key_rules` (always empty)
+**Fully searched:**
+- backend, admission, bypass (composite), prewarm, TTL class rules, cache_key_rules
 
 ### Remaining Work
 
 - SA/QUBO over the full discrete policy configuration space
-- cache_key_rules generation (requires regex dependency)
 
 ### Quantum-Inspired Role
 

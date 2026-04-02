@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use qc_model::object::{ObjectFeatures, ScoredObject};
 use qc_model::policy_ir::{AdmissionRule, Backend, BypassRule, PolicyIR};
 use qc_model::trace::RequestTraceEvent;
+use regex::Regex;
 
 use crate::baselines::{S3FifoPolicy, SievePolicy};
 use crate::engine::{CacheOutcome, CachePolicy};
@@ -88,12 +89,27 @@ pub struct IrPolicy {
     ttl_overrides: HashMap<String, u64>,
     /// Track insert times for TTL-based stale detection at IR level.
     insert_times: HashMap<String, DateTime<Utc>>,
+    /// Compiled cache_key_rules regexes.
+    key_transforms: Vec<(Regex, String)>,
+    /// Cache for transformed keys (original → normalized).
+    key_cache: HashMap<String, String>,
 }
 
 impl IrPolicy {
     pub fn new(ir: PolicyIR, context: IrEvalContext) -> Self {
         let backend = BackendInner::new(ir.backend, ir.capacity_bytes);
         let display_name = Self::build_name(&ir);
+
+        let key_transforms: Vec<(Regex, String)> = ir
+            .cache_key_rules
+            .iter()
+            .filter_map(|rule| {
+                Regex::new(&rule.pattern)
+                    .ok()
+                    .map(|re| (re, rule.replacement.clone()))
+            })
+            .collect();
+
         Self {
             ir,
             context,
@@ -101,7 +117,25 @@ impl IrPolicy {
             display_name,
             ttl_overrides: HashMap::new(),
             insert_times: HashMap::new(),
+            key_transforms,
+            key_cache: HashMap::new(),
         }
+    }
+
+    /// Apply cache_key_rules to normalize a cache key.
+    fn normalize_key(&mut self, original: &str) -> String {
+        if self.key_transforms.is_empty() {
+            return original.to_string();
+        }
+        if let Some(cached) = self.key_cache.get(original) {
+            return cached.clone();
+        }
+        let mut key = original.to_string();
+        for (re, replacement) in &self.key_transforms {
+            key = re.replace_all(&key, replacement.as_str()).to_string();
+        }
+        self.key_cache.insert(original.to_string(), key.clone());
+        key
     }
 
     /// Resolve TTL for a given content_type using ttl_class_rules.
@@ -248,6 +282,21 @@ impl CachePolicy for IrPolicy {
             return CacheOutcome::Bypass;
         }
 
+        // 0. Apply cache_key_rules normalization
+        let effective_event = if !self.key_transforms.is_empty() {
+            let normalized = self.normalize_key(&event.cache_key);
+            if normalized != event.cache_key {
+                let mut e = event.clone();
+                e.cache_key = normalized;
+                std::borrow::Cow::Owned(e)
+            } else {
+                std::borrow::Cow::Borrowed(event)
+            }
+        } else {
+            std::borrow::Cow::Borrowed(event)
+        };
+        let event = effective_event.as_ref();
+
         // 1. Bypass rule
         if self.should_bypass(event) {
             return CacheOutcome::Bypass;
@@ -257,20 +306,17 @@ impl CachePolicy for IrPolicy {
         if self.backend.contains(&event.cache_key) {
             let outcome = self.backend.on_request(event);
 
-            // Apply IR-level TTL class stale check
             if outcome == CacheOutcome::Hit {
                 if let Some(&insert_time) = self.insert_times.get(&event.cache_key) {
                     let ttl = self.get_ttl(&event.cache_key);
                     let age = (event.timestamp - insert_time).num_seconds();
                     if age > ttl as i64 {
-                        // Refresh insert time on stale
                         self.insert_times
                             .insert(event.cache_key.clone(), event.timestamp);
                         return CacheOutcome::StaleHit;
                     }
                 }
             }
-            // Track/refresh insert time on hit
             self.insert_times
                 .entry(event.cache_key.clone())
                 .or_insert(event.timestamp);
@@ -284,7 +330,6 @@ impl CachePolicy for IrPolicy {
 
         // 4. Admitted → delegate to backend (insert + return Miss)
         let outcome = self.backend.on_request(event);
-        // Track insert time for new objects
         self.insert_times
             .insert(event.cache_key.clone(), event.timestamp);
         outcome

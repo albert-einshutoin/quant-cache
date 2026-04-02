@@ -89,7 +89,35 @@ fn compile_cloudflare(
         }));
     }
 
-    // 3. Worker script for admission gate
+    // 3. Cache key normalization rules
+    let cache_key_config = if ir.cache_key_rules.is_empty() {
+        None
+    } else {
+        let query_params_to_strip: Vec<&str> = ir
+            .cache_key_rules
+            .iter()
+            .filter_map(|r| {
+                // Extract param name from patterns like [?&]utm_[^&]* or [?&]fbclid=[^&]*
+                if r.pattern.contains("utm_") {
+                    Some("utm_*")
+                } else if r.pattern.contains("fbclid") {
+                    Some("fbclid")
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Some(serde_json::json!({
+            "query_string_strip": query_params_to_strip,
+            "_note": "Map to Cloudflare Cache Key → Query String settings",
+            "_rules": ir.cache_key_rules.iter().map(|r| {
+                serde_json::json!({"pattern": &r.pattern, "replacement": &r.replacement})
+            }).collect::<Vec<_>>()
+        }))
+    };
+
+    // 4. Worker script for admission gate
     let worker = match &ir.admission_rule {
         AdmissionRule::Always => None,
         AdmissionRule::ScoreThreshold { threshold } => {
@@ -117,6 +145,7 @@ fn compile_cloudflare(
             "admission": format!("{:?}", ir.admission_rule),
         },
         "ruleset_payload": ruleset,
+        "cache_key_config": cache_key_config,
         "worker_script": worker,
         "prewarm_urls": ir.prewarm_set,
         "_deploy_steps": [
