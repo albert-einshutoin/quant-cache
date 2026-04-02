@@ -278,16 +278,33 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase E — Multi-Vendor + Quantum
+## Phase E — Validation, cache_key_rules, Multi-Vendor
 
-**Goal:** Cross-CDN optimization and quantum hardware experiments
+**Goal:** Deployability hardening, cache key normalization, additional providers
+
+### cache_key_rules Implementation
+
+PolicyIR の `cache_key_rules` は定義済みだが評価・探索ともに未実装。
+実装には `regex` crate の依存追加が必要。
+
+```rust
+// 例: UTM パラメータを除去して cache key を正規化
+{ "pattern": "[?&]utm_[^&]*", "replacement": "" }
+```
+
+用途:
+- Query parameter stripping (UTM, session ID)
+- Device variant normalization (/mobile/ → /)
+- Cloudflare Cache Rules の Cache Key 設定に直接マップ可能
 
 ### Deliverables
 
+- cache_key_rules の IR evaluator 実装 (regex 依存)
+- policy-search での cache_key_rules 探索
+- Cloudflare / CloudFront API schema validation
 - Cross-CDN policy comparison (same IR, different targets)
-- IBM Quantum / Amplify adapter for policy search
-- Classical vs quantum solver comparison
-- Multi-tier cache planning (edge → regional → origin)
+- Fastly VCL / Compute target
+- IBM Quantum / Amplify adapter for policy search (research)
 
 ---
 

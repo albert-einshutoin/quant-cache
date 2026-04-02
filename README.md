@@ -50,6 +50,38 @@ qc optimize --input trace.csv --output policy.json --capacity 50000000 --preset 
 qc calibrate --train train.csv --validation val.csv --capacity 50000000
 ```
 
+## End-to-End: Trace → Cloudflare Config
+
+```bash
+# 1. Import CloudFront logs (or generate synthetic)
+qc import --provider cloudfront --input access.log --output trace.csv
+
+# 2. Search for the best policy configuration
+qc policy-search --input trace.csv --capacity 50000000 \
+  --preset ecommerce --output best-policy.json
+
+# 3. Evaluate the policy on the trace
+qc policy-eval --input trace.csv --policy best-policy.json --preset ecommerce
+
+# 4. Generate optimizer scores for admission gate
+qc optimize --input trace.csv --output scores.json \
+  --capacity 50000000 --preset ecommerce
+
+# 5. Compile to Cloudflare Rulesets API payload
+qc compile --policy best-policy.json --scores scores.json \
+  --target cloudflare --output cloudflare-config.json
+
+# 6. (Or compile to CloudFront)
+qc compile --policy best-policy.json --scores scores.json \
+  --target cloudfront --output cloudfront-config.json
+```
+
+The output `cloudflare-config.json` contains:
+- Rulesets API payload (`http_request_cache_settings` phase)
+- Workers script with populated admission scores
+- Prewarm URL list
+- Step-by-step deploy instructions
+
 ## What It Does
 
 ### 1. Economic Scoring
