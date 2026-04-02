@@ -80,7 +80,7 @@ fn cloudfront_import_full_pipeline() {
     let cmp_msg = String::from_utf8_lossy(&out.stdout);
     assert!(cmp_msg.contains("LRU"));
     assert!(cmp_msg.contains("GDSF"));
-    assert!(cmp_msg.contains("EconomicGreedy"));
+    assert!(cmp_msg.contains("SIEVE"));
 }
 
 fn generate_cf_log(path: &std::path::Path, num_lines: usize) {
