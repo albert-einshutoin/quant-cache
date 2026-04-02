@@ -257,13 +257,16 @@ impl IrPolicy {
         // Insert prewarm objects just before trace starts
         let prewarm_time = trace_start - chrono::Duration::seconds(1);
 
-        for key in &self.ir.prewarm_set {
+        let prewarm_keys = self.ir.prewarm_set.clone();
+        for key in &prewarm_keys {
             if let Some(feat) = feature_map.get(key.as_str()) {
+                // Normalize the prewarm key so it matches on_request() lookups
+                let normalized = self.normalize_key(key);
                 let event = RequestTraceEvent {
                     schema_version: "1.0".to_string(),
                     timestamp: prewarm_time,
                     object_id: feat.object_id.clone(),
-                    cache_key: key.clone(),
+                    cache_key: normalized.clone(),
                     object_size_bytes: feat.size_bytes,
                     response_bytes: Some(feat.size_bytes),
                     cache_status: None,
@@ -275,10 +278,10 @@ impl IrPolicy {
                     version_or_etag: None,
                     eligible_for_cache: true,
                 };
-                // Insert into backend (this will be a miss → insert)
+                // Insert into backend with normalized key
                 self.backend.on_request(&event);
-                // Track insert time for IR-level TTL stale detection
-                self.insert_times.insert(key.clone(), prewarm_time);
+                // Track insert time under normalized key
+                self.insert_times.insert(normalized, prewarm_time);
             }
         }
     }

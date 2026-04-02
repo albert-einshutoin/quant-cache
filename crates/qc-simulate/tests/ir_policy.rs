@@ -293,3 +293,73 @@ fn cache_key_rules_with_admission_uses_normalized_scores() {
         "rejected object should not be cached"
     );
 }
+
+#[test]
+fn prewarm_with_cache_key_rules_normalizes() {
+    let (events, features, scored) = generate_small_trace();
+
+    // Prewarm with a key that has query params
+    // cache_key_rules will strip ?... so the normalized key is "/prewarm-target"
+    let ir = PolicyIR {
+        backend: Backend::Sieve,
+        capacity_bytes: 1_000_000,
+        admission_rule: AdmissionRule::Always,
+        bypass_rule: BypassRule::None,
+        prewarm_set: vec!["/prewarm-target?utm_source=test".to_string()],
+        ttl_class_rules: vec![],
+        cache_key_rules: vec![qc_model::policy_ir::CacheKeyRule {
+            pattern: r"\?.*$".to_string(),
+            replacement: "".to_string(),
+        }],
+    };
+
+    // Add matching feature so prewarm can find the object
+    let mut features_with_target = features.clone();
+    features_with_target.push(qc_model::object::ObjectFeatures {
+        object_id: "prewarm-target".into(),
+        cache_key: "/prewarm-target?utm_source=test".into(),
+        size_bytes: 1000,
+        eligible_for_cache: true,
+        request_count: 10,
+        request_rate: 0.001,
+        avg_response_bytes: 1000,
+        avg_origin_cost: 0.01,
+        avg_latency_saving_ms: 50.0,
+        ttl_seconds: 3600,
+        update_rate: 0.0,
+        last_modified: None,
+        stale_penalty_class: qc_model::scenario::StalePenaltyClass::None,
+        purge_group: None,
+        origin_group: None,
+        mean_reuse_distance: None,
+        reuse_distance_p50: None,
+        reuse_distance_p95: None,
+    });
+
+    let ctx = IrEvalContext::from_features_and_scores(&features_with_target, &scored);
+    let mut policy = IrPolicy::new(ir, ctx);
+    let trace_start = events.first().unwrap().timestamp;
+    policy.prewarm(&features_with_target, trace_start);
+
+    // Request to the normalized key (without query params) should hit
+    let mut e = events[0].clone();
+    e.cache_key = "/prewarm-target".to_string();
+    e.object_size_bytes = 1000;
+    e.eligible_for_cache = true;
+    let outcome = policy.on_request(&e);
+    assert_eq!(
+        outcome,
+        CacheOutcome::Hit,
+        "normalized prewarm key should hit"
+    );
+
+    // Request with different query params should also hit (same normalized key)
+    let mut e2 = e.clone();
+    e2.cache_key = "/prewarm-target?utm_source=other".to_string();
+    let outcome2 = policy.on_request(&e2);
+    assert_eq!(
+        outcome2,
+        CacheOutcome::Hit,
+        "different query params should hit via normalized prewarm key"
+    );
+}
