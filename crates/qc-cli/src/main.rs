@@ -3,7 +3,9 @@ use clap::{Parser, Subcommand};
 mod commands;
 mod providers;
 
-use commands::{calibrate, compare, generate, import, optimize, policy_eval, simulate};
+use commands::{
+    calibrate, compare, generate, import, optimize, policy_eval, policy_search, simulate,
+};
 
 #[derive(Parser)]
 #[command(name = "qc")]
@@ -24,6 +26,8 @@ enum Commands {
     Optimize(optimize::OptimizeArgs),
     /// Evaluate PolicyIR configurations against a trace
     PolicyEval(policy_eval::PolicyEvalArgs),
+    /// Search for the best PolicyIR configuration
+    PolicySearch(policy_search::PolicySearchArgs),
     /// Replay trace and measure metrics
     Simulate(simulate::SimulateArgs),
     /// Compare baseline policies side-by-side
@@ -47,6 +51,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Generate(args) => generate::run(args),
         Commands::Optimize(args) => optimize::run(args),
         Commands::PolicyEval(args) => policy_eval::run(args),
+        Commands::PolicySearch(args) => policy_search::run(args),
         Commands::Simulate(args) => simulate::run(args),
         Commands::Compare(args) => compare::run(args),
         Commands::Calibrate(args) => calibrate::run(args),
