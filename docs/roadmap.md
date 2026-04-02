@@ -277,33 +277,33 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase E — Validation, cache_key_rules, Multi-Vendor
+## Phase E — Provider Validation, Multi-Vendor, Quantum Search
 
-**Goal:** Deployability hardening, cache key normalization, additional providers
-
-### cache_key_rules Implementation
-
-PolicyIR の `cache_key_rules` は定義済みだが評価・探索ともに未実装。
-実装には `regex` crate の依存追加が必要。
-
-```rust
-// 例: UTM パラメータを除去して cache key を正規化
-{ "pattern": "[?&]utm_[^&]*", "replacement": "" }
-```
-
-用途:
-- Query parameter stripping (UTM, session ID)
-- Device variant normalization (/mobile/ → /)
-- Cloudflare Cache Rules の Cache Key 設定に直接マップ可能
+**Goal:** Deploy validation, additional providers, quantum-inspired DSL search
 
 ### Deliverables
 
-- cache_key_rules の IR evaluator 実装 (regex 依存)
-- policy-search での cache_key_rules 探索
-- Cloudflare / CloudFront API schema validation
-- Cross-CDN policy comparison (same IR, different targets)
-- Fastly VCL / Compute target
-- IBM Quantum / Amplify adapter for policy search (research)
+1. **Provider schema validation**
+   - Validate Cloudflare ruleset output against Cloudflare API schema
+   - Validate CloudFront output against AWS API schema
+   - `qc compile --validate` flag
+
+2. **Real deploy validation**
+   - End-to-end: real CloudFront trace → policy-search → compile → deploy → measure
+   - Before/after cost comparison on production traffic
+
+3. **Fastly VCL target**
+   - `qc compile --target fastly`
+   - VCL snippet generation for bypass/TTL/admission rules
+
+4. **Cross-CDN comparison**
+   - Same PolicyIR → different targets → compare generated configs
+   - Provider-specific limitation documentation
+
+5. **Quantum-inspired policy search**
+   - SA/QUBO over the full discrete PolicyIR configuration space
+   - Replace grid+random with structured annealing over DSL
+   - Compare quantum-inspired vs grid search quality
 
 ---
 
