@@ -4,7 +4,7 @@ mod commands;
 mod providers;
 
 use commands::{
-    calibrate, compare, generate, import, optimize, policy_eval, policy_search, simulate,
+    calibrate, compare, compile, generate, import, optimize, policy_eval, policy_search, simulate,
 };
 
 #[derive(Parser)]
@@ -34,6 +34,8 @@ enum Commands {
     Compare(compare::CompareArgs),
     /// Calibrate economic parameters using train/validation traces
     Calibrate(calibrate::CalibrateArgs),
+    /// Compile PolicyIR to vendor-native configuration
+    Compile(compile::CompileArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -55,5 +57,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Simulate(args) => simulate::run(args),
         Commands::Compare(args) => compare::run(args),
         Commands::Calibrate(args) => calibrate::run(args),
+        Commands::Compile(args) => compile::run(args),
     }
 }

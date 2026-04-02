@@ -1,5 +1,6 @@
 pub mod calibrate;
 pub mod compare;
+pub mod compile;
 pub mod generate;
 pub mod import;
 pub mod optimize;
