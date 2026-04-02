@@ -24,6 +24,10 @@ pub struct CompileArgs {
     /// Output file
     #[arg(short, long, default_value = "cache-config.json")]
     pub output: PathBuf,
+
+    /// Validate the compiled output against provider schema constraints
+    #[arg(long, default_value_t = false)]
+    pub validate: bool,
 }
 
 pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
@@ -43,11 +47,35 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
         None
     };
 
-    match args.target.as_str() {
+    let result = match args.target.as_str() {
         "cloudflare" => compile_cloudflare(&ir, score_map.as_ref(), &args.output),
         "cloudfront" => compile_cloudfront(&ir, score_map.as_ref(), &args.output),
         other => anyhow::bail!("unsupported target: {other}. Supported: cloudflare, cloudfront"),
+    };
+
+    if args.validate {
+        let output_str = std::fs::read_to_string(&args.output)?;
+        let config: serde_json::Value = serde_json::from_str(&output_str)?;
+        let issues = match args.target.as_str() {
+            "cloudflare" => validate_cloudflare(&config),
+            "cloudfront" => validate_cloudfront(&config),
+            _ => vec![],
+        };
+
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        if issues.is_empty() {
+            writeln!(out, "\nValidation: PASS (0 issues)")?;
+        } else {
+            writeln!(out, "\nValidation: {} issue(s) found:", issues.len())?;
+            for (i, issue) in issues.iter().enumerate() {
+                writeln!(out, "  {}: {}", i + 1, issue)?;
+            }
+            anyhow::bail!("validation failed with {} issue(s)", issues.len());
+        }
     }
+
+    result
 }
 
 // ── Cloudflare Compiler ─────────────────────────────────────────────
@@ -389,4 +417,189 @@ function handler(event) {{
 }}
 "#
     )
+}
+
+// ── Validators ──────────────────────────────────────────────────────
+
+fn validate_cloudflare(config: &serde_json::Value) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    // Check ruleset_payload structure
+    let ruleset = &config["ruleset_payload"];
+    if ruleset.is_null() {
+        issues.push("missing 'ruleset_payload' in output".into());
+        return issues;
+    }
+
+    if ruleset["phase"] != "http_request_cache_settings" {
+        issues.push(format!(
+            "ruleset phase should be 'http_request_cache_settings', got {:?}",
+            ruleset["phase"]
+        ));
+    }
+
+    if ruleset["kind"] != "zone" {
+        issues.push(format!(
+            "ruleset kind should be 'zone', got {:?}",
+            ruleset["kind"]
+        ));
+    }
+
+    // Validate each rule
+    if let Some(rules) = ruleset["rules"].as_array() {
+        for (i, rule) in rules.iter().enumerate() {
+            let ctx = format!("rule[{}]", i);
+
+            // Must have expression
+            if rule["expression"].as_str().unwrap_or("").is_empty() {
+                issues.push(format!("{ctx}: missing or empty 'expression'"));
+            }
+
+            // Must have action
+            let action = rule["action"].as_str().unwrap_or("");
+            if action.is_empty() {
+                issues.push(format!("{ctx}: missing 'action'"));
+            } else if action != "set_cache_settings" {
+                issues.push(format!(
+                    "{ctx}: unexpected action '{action}' (expected 'set_cache_settings')"
+                ));
+            }
+
+            // Must have action_parameters
+            if rule["action_parameters"].is_null() {
+                issues.push(format!("{ctx}: missing 'action_parameters'"));
+            }
+
+            // Must have enabled field
+            if rule["enabled"].is_null() {
+                issues.push(format!("{ctx}: missing 'enabled' field"));
+            }
+
+            // Validate description length (Cloudflare limit: 500 chars)
+            if let Some(desc) = rule["description"].as_str() {
+                if desc.len() > 500 {
+                    issues.push(format!(
+                        "{ctx}: description exceeds 500 chars ({})",
+                        desc.len()
+                    ));
+                }
+            }
+        }
+
+        // Cloudflare limit: max 25 rules per phase
+        if rules.len() > 25 {
+            issues.push(format!(
+                "too many rules: {} (Cloudflare limit: 25 per phase)",
+                rules.len()
+            ));
+        }
+    }
+
+    // Validate worker script if present
+    if let Some(worker) = config["worker_script"].as_str() {
+        if worker.contains("// Run: qc compile --scores") || worker.contains("/* populate") {
+            issues.push("worker script contains unpopulated placeholder scores".into());
+        }
+        // Cloudflare Workers size limit: 1MB for bundled, 10MB for paid
+        if worker.len() > 1_000_000 {
+            issues.push(format!(
+                "worker script exceeds 1MB ({} bytes)",
+                worker.len()
+            ));
+        }
+    }
+
+    // Validate prewarm URLs
+    if let Some(urls) = config["prewarm_urls"].as_array() {
+        for (i, url) in urls.iter().enumerate() {
+            if let Some(u) = url.as_str() {
+                if !u.starts_with('/') {
+                    issues.push(format!(
+                        "prewarm_urls[{i}]: should start with '/', got '{u}'"
+                    ));
+                }
+            }
+        }
+    }
+
+    issues
+}
+
+fn validate_cloudfront(config: &serde_json::Value) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    if config["_target"] != "cloudfront" {
+        issues.push("_target should be 'cloudfront'".into());
+    }
+
+    // Validate cache behaviors
+    if let Some(behaviors) = config["cache_behaviors"].as_array() {
+        for (i, behavior) in behaviors.iter().enumerate() {
+            let ctx = format!("cache_behaviors[{i}]");
+
+            // DefaultTTL must be non-negative if present
+            if let Some(ttl) = behavior["DefaultTTL"].as_i64() {
+                if ttl < 0 {
+                    issues.push(format!("{ctx}: DefaultTTL must be non-negative, got {ttl}"));
+                }
+            }
+
+            // MaxTTL >= DefaultTTL
+            if let (Some(default_ttl), Some(max_ttl)) =
+                (behavior["DefaultTTL"].as_i64(), behavior["MaxTTL"].as_i64())
+            {
+                if max_ttl < default_ttl {
+                    issues.push(format!(
+                        "{ctx}: MaxTTL ({max_ttl}) < DefaultTTL ({default_ttl})"
+                    ));
+                }
+            }
+
+            // CachePolicyId format (UUID)
+            if let Some(policy_id) = behavior["CachePolicyId"].as_str() {
+                if policy_id.len() != 36 || policy_id.chars().filter(|&c| c == '-').count() != 4 {
+                    issues.push(format!(
+                        "{ctx}: CachePolicyId doesn't look like a UUID: '{policy_id}'"
+                    ));
+                }
+            }
+        }
+
+        // CloudFront limit: max 25 cache behaviors per distribution
+        if behaviors.len() > 25 {
+            issues.push(format!(
+                "too many cache behaviors: {} (CloudFront limit: 25)",
+                behaviors.len()
+            ));
+        }
+    }
+
+    // Validate CloudFront Function if present
+    if let Some(func) = config["cloudfront_function"].as_str() {
+        // CloudFront Functions size limit: 10KB
+        if func.len() > 10_240 {
+            issues.push(format!(
+                "CloudFront Function exceeds 10KB ({} bytes)",
+                func.len()
+            ));
+        }
+        if func.contains("/* populate") {
+            issues.push("CloudFront Function contains unpopulated placeholder".into());
+        }
+    }
+
+    // Validate prewarm paths
+    if let Some(paths) = config["prewarm_paths"].as_array() {
+        for (i, path) in paths.iter().enumerate() {
+            if let Some(p) = path.as_str() {
+                if !p.starts_with('/') {
+                    issues.push(format!(
+                        "prewarm_paths[{i}]: should start with '/', got '{p}'"
+                    ));
+                }
+            }
+        }
+    }
+
+    issues
 }

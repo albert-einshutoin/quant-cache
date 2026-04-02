@@ -222,3 +222,82 @@ fn compile_with_scores() {
         "should contain object paths from optimize"
     );
 }
+
+#[test]
+fn validate_cloudflare_passes_valid_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{"backend":"sieve","capacity_bytes":100000,"ttl_class_rules":[{"content_type_pattern":"image/","ttl_seconds":3600}],"prewarm_set":["/hero.jpg"]}"#,
+    );
+    let out = dir.path().join("cf.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "cloudflare", "-o"])
+        .arg(&out)
+        .args(["--validate"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "valid config should pass validation"
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("PASS"), "should report PASS");
+}
+
+#[test]
+fn validate_cloudflare_fails_unpopulated_scores() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{"backend":"sieve","capacity_bytes":100000,"admission_rule":{"type":"score_threshold","threshold":1.0}}"#,
+    );
+    let out = dir.path().join("cf.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "cloudflare", "-o"])
+        .arg(&out)
+        .args(["--validate"])
+        .output()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "unpopulated scores should fail validation"
+    );
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("validation failed"),
+        "should report failure"
+    );
+}
+
+#[test]
+fn validate_cloudfront_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{"backend":"s3_fifo","capacity_bytes":100000,"ttl_class_rules":[{"content_type_pattern":"application/json","ttl_seconds":300}],"prewarm_set":["/api/health"]}"#,
+    );
+    let out = dir.path().join("cfn.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "cloudfront", "-o"])
+        .arg(&out)
+        .args(["--validate"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "valid CloudFront config should pass"
+    );
+}
