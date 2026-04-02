@@ -213,22 +213,20 @@ struct PolicyIR {
 
 ### Current Status
 
-`qc policy-search` searches over a **subset** of PolicyIR:
+`qc policy-search` searches over:
 - Backend (SIEVE / S3-FIFO)
 - Admission rule (Always / ScoreThreshold / ScoreDensityThreshold)
-- Bypass rule (None / SizeLimit / FreshnessRisk)
+- Bypass rule (None / SizeLimit / FreshnessRisk / composite Any)
 - Prewarm set (top-k by score)
+- TTL class rules (content-type prefix → TTL from trace-observed types)
 
 **Not yet searched:**
-- `ttl_class_rules` (always empty in search output)
 - `cache_key_rules` (always empty)
-- Composite bypass rules (BypassRule::Any)
 
 ### Remaining Work
 
-- Extend search space to include TTL class rule generation
 - SA/QUBO over the full discrete policy configuration space
-- Workload-aware rule generation (content-type → TTL mapping from trace)
+- cache_key_rules generation (requires regex dependency)
 
 ### Quantum-Inspired Role
 
@@ -250,15 +248,18 @@ they inform which policy configurations handle correlated access patterns.
 - Prewarm URL list
 - Backend recommendation note
 
-**Limitations (not yet vendor-native):**
-- Worker script contains placeholder `ADMISSION_SCORES` (needs manual population)
-- FreshnessRisk bypass emits a comment, not a valid Cloudflare expression
+**Current capabilities:**
+- Worker `ADMISSION_SCORES` populated from `qc optimize --scores` output
+- FreshnessRisk bypass maps to content-type-based Cloudflare expression
+- Composite bypass rules (BypassRule::Any) fully compiled
+- TTL class rules compiled to Cloudflare cache TTL expressions
+
+**Remaining limitations:**
 - Backend choice is advisory only (not mapped to Cloudflare settings)
-- Output requires manual review before deployment
+- Output is deployment scaffold — manual review before deployment recommended
 
 ### Remaining Work
 
-- Populate Worker `ADMISSION_SCORES` from `qc optimize` output
 - Generate deployable Cloudflare API payloads (not just JSON scaffolds)
 - Add `--target fastly` (VCL/Compute) and `--target cloudfront` (Functions)
 - Validate generated config against Cloudflare API schema

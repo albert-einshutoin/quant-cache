@@ -89,11 +89,23 @@ pub fn run(args: &PolicySearchArgs) -> anyhow::Result<()> {
         .map(|e| e.timestamp)
         .unwrap_or_else(chrono::Utc::now);
 
+    // Collect observed content types from trace for TTL rule generation
+    let content_types: Vec<String> = {
+        let mut cts: Vec<String> = events
+            .iter()
+            .filter_map(|e| e.content_type.clone())
+            .collect();
+        cts.sort();
+        cts.dedup();
+        cts
+    };
+
     let search_config = PolicySearchConfig {
         capacity_bytes: args.capacity,
         max_iterations: args.max_iterations,
         seed: 42,
         top_k: args.top_k,
+        content_types,
     };
 
     // Eval function: build IrPolicy from IR, replay, return objective
