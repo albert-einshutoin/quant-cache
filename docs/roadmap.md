@@ -181,7 +181,7 @@ trait QuadraticSolver {
 
 ---
 
-## Phase B — Policy IR + Evaluator (NEXT)
+## Phase B — Policy IR + Evaluator (DONE)
 
 **Goal:** Define a policy intermediate representation and replay it
 

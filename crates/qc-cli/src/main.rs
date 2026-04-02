@@ -34,7 +34,7 @@ enum Commands {
     Compare(compare::CompareArgs),
     /// Calibrate economic parameters using train/validation traces
     Calibrate(calibrate::CalibrateArgs),
-    /// Compile PolicyIR to vendor-native configuration
+    /// Generate deployment scaffold from PolicyIR (Cloudflare)
     Compile(compile::CompileArgs),
 }
 
