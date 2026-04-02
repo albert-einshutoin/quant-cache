@@ -254,14 +254,20 @@ they inform which policy configurations handle correlated access patterns.
 - Composite bypass rules (BypassRule::Any) fully compiled
 - TTL class rules compiled to Cloudflare cache TTL expressions
 
+**Current capabilities:**
+- Cloudflare output uses Rulesets API format (http_request_cache_settings phase)
+- CloudFront output generates CacheBehaviors with standard CachePolicyIds
+- Both targets support --scores for populated admission gate code
+- Deploy steps documented in output JSON
+
 **Remaining limitations:**
-- Backend choice is advisory only (not mapped to Cloudflare settings)
-- Output is deployment scaffold — manual review before deployment recommended
+- Backend choice is advisory (CDN providers don't expose eviction algo selection)
+- Manual review before deployment still recommended
 
 ### Remaining Work
 
-- Generate deployable Cloudflare API payloads (not just JSON scaffolds)
-- Add `--target fastly` (VCL/Compute) and `--target cloudfront` (Functions)
+- Add --target fastly (VCL/Compute)
+- Cloudflare API validation / direct deployment
 - Validate generated config against Cloudflare API schema
 
 ### Future Targets
