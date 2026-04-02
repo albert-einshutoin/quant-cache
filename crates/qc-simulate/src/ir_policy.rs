@@ -189,6 +189,8 @@ impl IrPolicy {
                 };
                 // Insert into backend (this will be a miss → insert)
                 self.backend.on_request(&event);
+                // Track insert time for IR-level TTL stale detection
+                self.insert_times.insert(key.clone(), prewarm_time);
             }
         }
     }
