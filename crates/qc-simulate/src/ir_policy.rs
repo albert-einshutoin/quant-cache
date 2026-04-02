@@ -110,6 +110,14 @@ impl IrPolicy {
             })
             .collect();
 
+        // Remap context keys to normalized form so that admission/bypass/freshness
+        // lookups work correctly after cache_key_rules are applied.
+        let context = if key_transforms.is_empty() {
+            context
+        } else {
+            Self::remap_context(context, &key_transforms)
+        };
+
         Self {
             ir,
             context,
@@ -119,6 +127,50 @@ impl IrPolicy {
             insert_times: HashMap::new(),
             key_transforms,
             key_cache: HashMap::new(),
+        }
+    }
+
+    /// Remap IrEvalContext keys from original to normalized form.
+    fn remap_context(ctx: IrEvalContext, transforms: &[(Regex, String)]) -> IrEvalContext {
+        let normalize = |key: &str| -> String {
+            let mut k = key.to_string();
+            for (re, replacement) in transforms {
+                k = re.replace_all(&k, replacement.as_str()).to_string();
+            }
+            k
+        };
+
+        // For scores/sizes/freshness: if multiple original keys map to the same
+        // normalized key, keep the one with the highest score (most valuable).
+        let mut scores: HashMap<String, f64> = HashMap::new();
+        for (k, v) in ctx.scores {
+            let nk = normalize(&k);
+            let entry = scores.entry(nk).or_insert(0.0);
+            if v > *entry {
+                *entry = v;
+            }
+        }
+
+        let mut sizes: HashMap<String, u64> = HashMap::new();
+        for (k, v) in ctx.sizes {
+            let nk = normalize(&k);
+            sizes.entry(nk).or_insert(v);
+        }
+
+        let mut freshness_risks: HashMap<String, f64> = HashMap::new();
+        for (k, v) in ctx.freshness_risks {
+            let nk = normalize(&k);
+            let entry = freshness_risks.entry(nk).or_insert(0.0);
+            // Use max freshness risk (conservative)
+            if v > *entry {
+                *entry = v;
+            }
+        }
+
+        IrEvalContext {
+            scores,
+            sizes,
+            freshness_risks,
         }
     }
 
@@ -157,9 +209,11 @@ impl IrPolicy {
             return;
         }
         for event in events {
-            if !self.ttl_overrides.contains_key(&event.cache_key) {
+            // Use normalized key for TTL lookup consistency
+            let effective_key = self.normalize_key(&event.cache_key);
+            if !self.ttl_overrides.contains_key(&effective_key) {
                 let ttl = self.resolve_ttl(event.content_type.as_deref());
-                self.ttl_overrides.insert(event.cache_key.clone(), ttl);
+                self.ttl_overrides.insert(effective_key, ttl);
             }
         }
     }

@@ -225,3 +225,71 @@ fn cache_key_rules_normalize_keys() {
         "second request with different query params should hit (normalized to same key)"
     );
 }
+
+#[test]
+fn cache_key_rules_with_admission_uses_normalized_scores() {
+    let (events, features, scored) = generate_small_trace();
+
+    // Score one specific normalized path highly
+    let mut custom_scored = scored.clone();
+    // Add a scored object for "/special" (the normalized form)
+    custom_scored.push(make_scored("/special", 100, 999.0));
+
+    let ir = PolicyIR {
+        backend: Backend::Sieve,
+        capacity_bytes: 1_000_000,
+        admission_rule: AdmissionRule::ScoreThreshold { threshold: 500.0 },
+        bypass_rule: BypassRule::None,
+        prewarm_set: vec![],
+        ttl_class_rules: vec![],
+        cache_key_rules: vec![qc_model::policy_ir::CacheKeyRule {
+            pattern: r"\?.*$".to_string(),
+            replacement: "".to_string(),
+        }],
+    };
+
+    let ctx = IrEvalContext::from_features_and_scores(&features, &custom_scored);
+    let mut policy = IrPolicy::new(ir, ctx);
+
+    // Request with query params — normalized to "/special" which has score 999
+    let mut e1 = events[0].clone();
+    e1.cache_key = "/special?tracking=abc".to_string();
+    e1.object_size_bytes = 100;
+    e1.eligible_for_cache = true;
+
+    let r1 = policy.on_request(&e1);
+    // Should be Miss (first access) but admitted (score 999 > threshold 500)
+    assert_eq!(r1, CacheOutcome::Miss, "first access is miss but admitted");
+
+    // Second request — should be hit (same normalized key, was admitted)
+    let mut e2 = e1.clone();
+    e2.cache_key = "/special?tracking=xyz".to_string();
+    let r2 = policy.on_request(&e2);
+    assert_eq!(
+        r2,
+        CacheOutcome::Hit,
+        "second access should hit via normalized key"
+    );
+
+    // Request to a low-score path — should be rejected by admission
+    let mut e3 = events[0].clone();
+    e3.cache_key = "/lowvalue?x=1".to_string();
+    e3.object_size_bytes = 100;
+    e3.eligible_for_cache = true;
+    let r3 = policy.on_request(&e3);
+    assert_eq!(
+        r3,
+        CacheOutcome::Miss,
+        "low-score object should be rejected"
+    );
+
+    // Verify it wasn't cached (second request to same normalized key also misses)
+    let mut e4 = e3.clone();
+    e4.cache_key = "/lowvalue?x=2".to_string();
+    let r4 = policy.on_request(&e4);
+    assert_eq!(
+        r4,
+        CacheOutcome::Miss,
+        "rejected object should not be cached"
+    );
+}
