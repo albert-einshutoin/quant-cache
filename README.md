@@ -1,5 +1,7 @@
 # quant-cache
 
+**English** | [日本語](README.ja.md)
+
 An economic cache decision framework for CDN operators.
 
 quant-cache evaluates cache policies through an **economic objective function** ($/period)
