@@ -43,6 +43,8 @@ Scoring and solving are separated:
 - `crates/qc-simulate/src/synthetic.rs` — trace generator (Zipf α default: 0.6)
 - `crates/qc-simulate/src/co_access.rs` — co-occurrence extraction for quadratic terms
 - `crates/qc-cli/src/providers/cloudfront.rs` — CloudFront log parser
+- `crates/qc-cli/src/commands/compile.rs` — Cloudflare/CloudFront compiler + --validate
+- `crates/qc-cli/src/commands/deploy_check.rs` — Pre-deploy safety gate
 
 ## Important Design Decisions
 

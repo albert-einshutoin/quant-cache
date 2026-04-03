@@ -69,13 +69,16 @@ qc policy-eval --input trace.csv --policy best-policy.json --preset ecommerce
 qc optimize --input trace.csv --output scores.json \
   --capacity 50000000 --preset ecommerce
 
-# 5. Compile to Cloudflare Rulesets API payload
+# 5. Compile to Cloudflare Rulesets API payload + validate
 qc compile --policy best-policy.json --scores scores.json \
-  --target cloudflare --output cloudflare-config.json
+  --target cloudflare --output cloudflare-config.json --validate
 
-# 6. (Or compile to CloudFront)
+# 6. Pre-deploy safety check
+qc deploy-check --input trace.csv --policy best-policy.json --preset ecommerce
+
+# 7. (Or compile to CloudFront)
 qc compile --policy best-policy.json --scores scores.json \
-  --target cloudfront --output cloudfront-config.json
+  --target cloudfront --output cloudfront-config.json --validate
 ```
 
 The output `cloudflare-config.json` contains:
@@ -83,6 +86,7 @@ The output `cloudflare-config.json` contains:
 - Workers script with populated admission scores
 - Prewarm URL list
 - Step-by-step deploy instructions
+- Schema validation (with `--validate`)
 
 ## What It Does
 
@@ -122,7 +126,8 @@ Observed optimality gap: **median 0.01%, p95 0.72%** (n=1000, 50 cases).
 | `qc calibrate` | Auto-tune economic parameters using train/validation split |
 | `qc policy-eval` | Evaluate PolicyIR configurations on traces |
 | `qc policy-search` | Search backend/admission/bypass/prewarm space for best config |
-| `qc compile` | Generate deployment scaffold (Cloudflare Cache Rules + Worker) |
+| `qc compile` | Generate deployment scaffold + validate (Cloudflare/CloudFront) |
+| `qc deploy-check` | Pre-deploy safety check (LRU/SIEVE comparison + thresholds) |
 
 ## Baselines
 
@@ -154,7 +159,7 @@ quant-cache/
 │   ├── qc-model/      Data types, configs, presets, economic parameters
 │   ├── qc-solver/     BenefitCalculator, GreedySolver, ExactIlpSolver, SA solver, calibration
 │   ├── qc-simulate/   Replay engine, 5 baseline policies, synthetic generator, co-access
-│   └── qc-cli/        CLI (10 commands: import → generate → optimize → policy-search → policy-eval → compile)
+│   └── qc-cli/        CLI (11 commands: import → generate → optimize → policy-search → policy-eval → compile → deploy-check)
 ├── data/samples/      Sample traces and configs
 └── docs/              Design documents, related work (29 papers)
 ```
@@ -178,7 +183,7 @@ See [docs/related-work.md](docs/related-work.md) for the full survey.
 | Phase B | Policy IR + IR evaluator | Done |
 | Phase C | Policy search (all PolicyIR fields) | Done |
 | Phase D | Cloudflare + CloudFront deployment scaffolds | Done |
-| Phase E | Provider schema validation, quantum search | Planned |
+| Phase E | Provider validation, deploy safety, multi-vendor | In Progress |
 
 ## Testing
 
