@@ -37,6 +37,10 @@ pub struct PolicySearchArgs {
     #[arg(long, default_value_t = 5)]
     pub top_k: usize,
 
+    /// Search method: grid (default) or sa (simulated annealing)
+    #[arg(long, default_value = "grid")]
+    pub method: String,
+
     /// Output best PolicyIR as JSON
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -123,9 +127,13 @@ pub fn run(args: &PolicySearchArgs) -> anyhow::Result<()> {
 
     tracing::info!(
         max_iterations = search_config.max_iterations,
+        method = args.method.as_str(),
         "starting policy search"
     );
-    let result = policy_search::search(&search_config, &scored, eval_fn)?;
+    let result = match args.method.as_str() {
+        "sa" => policy_search::search_sa(&search_config, &scored, eval_fn)?,
+        _ => policy_search::search(&search_config, &scored, eval_fn)?,
+    };
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
