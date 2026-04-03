@@ -4,8 +4,8 @@ mod commands;
 mod providers;
 
 use commands::{
-    calibrate, compare, compile, deploy_check, generate, import, optimize, policy_eval,
-    policy_search, simulate,
+    calibrate, compare, compile, compile_compare, deploy_check, generate, import, optimize,
+    policy_eval, policy_search, simulate,
 };
 
 #[derive(Parser)]
@@ -39,6 +39,8 @@ enum Commands {
     Compile(compile::CompileArgs),
     /// Pre-deploy safety check: replay PolicyIR and verify thresholds
     DeployCheck(deploy_check::DeployCheckArgs),
+    /// Compare compiled output across all CDN providers
+    CompileCompare(compile_compare::CompileCompareArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -62,5 +64,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Calibrate(args) => calibrate::run(args),
         Commands::Compile(args) => compile::run(args),
         Commands::DeployCheck(args) => deploy_check::run(args),
+        Commands::CompileCompare(args) => compile_compare::run(args),
     }
 }
