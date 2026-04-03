@@ -149,8 +149,81 @@ fn cloudfront_full_ir() {
     // TTL behavior
     assert!(behaviors.iter().any(|b| b["DefaultTTL"] == 300));
 
+    assert!(config["cache_key_config"].is_null());
     assert_eq!(config["prewarm_paths"][0], "/api/config");
     assert!(config["_deploy_steps"].as_array().unwrap().len() >= 2);
+}
+
+#[test]
+fn cloudfront_cache_key_rules_and_query_aware_scores() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let trace = dir.path().join("trace.csv");
+    let policy = dir.path().join("policy.json");
+
+    let r = Command::new(qc())
+        .args([
+            "generate",
+            "--num-objects",
+            "20",
+            "--num-requests",
+            "500",
+            "-o",
+        ])
+        .arg(&trace)
+        .output()
+        .unwrap();
+    assert!(r.status.success());
+
+    let r = Command::new(qc())
+        .args(["optimize", "-i"])
+        .arg(&trace)
+        .args(["-o"])
+        .arg(&policy)
+        .args(["--capacity", "50000", "--preset", "ecommerce"])
+        .output()
+        .unwrap();
+    assert!(r.status.success());
+
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{
+        "backend": "sieve",
+        "capacity_bytes": 50000,
+        "admission_rule": {"type": "score_threshold", "threshold": 0.1},
+        "cache_key_rules": [
+          {"pattern":"[?&]utm_[^&]*","replacement":""},
+          {"pattern":"[?&]fbclid=[^&]*","replacement":""}
+        ]
+    }"#,
+    );
+    let out = dir.path().join("cfn.json");
+
+    let r = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["--scores"])
+        .arg(&policy)
+        .args(["-t", "cloudfront", "-o"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(r.status.success());
+
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(config["cache_key_config"]["query_string_strip"][0], "utm_*");
+    assert_eq!(
+        config["cache_key_config"]["query_string_strip"][1],
+        "fbclid"
+    );
+
+    let function = config["cloudfront_function"].as_str().unwrap();
+    assert!(function.contains("request.querystring"));
+    assert!(function.contains("normalizedKey(request)"));
+    assert!(function.contains("utm_*"));
+    assert!(function.contains("fbclid"));
 }
 
 #[test]

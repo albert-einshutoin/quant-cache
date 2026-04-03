@@ -47,11 +47,11 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
         None
     };
 
-    let result = match args.target.as_str() {
+    match args.target.as_str() {
         "cloudflare" => compile_cloudflare(&ir, score_map.as_ref(), &args.output),
         "cloudfront" => compile_cloudfront(&ir, score_map.as_ref(), &args.output),
         other => anyhow::bail!("unsupported target: {other}. Supported: cloudflare, cloudfront"),
-    };
+    }?;
 
     if args.validate {
         let output_str = std::fs::read_to_string(&args.output)?;
@@ -75,7 +75,7 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
         }
     }
 
-    result
+    Ok(())
 }
 
 // ── Cloudflare Compiler ─────────────────────────────────────────────
@@ -330,13 +330,18 @@ fn compile_cloudfront(
         }));
     }
 
-    // 3. CloudFront Function
+    // 3. Cache key normalization mapping
+    let cache_key_config = compile_cache_key_config(&ir.cache_key_rules);
+
+    // 4. CloudFront Function
     let function_code = match &ir.admission_rule {
         AdmissionRule::Always => None,
         AdmissionRule::ScoreThreshold { threshold }
-        | AdmissionRule::ScoreDensityThreshold { threshold } => {
-            Some(gen_cf_function(*threshold, score_map))
-        }
+        | AdmissionRule::ScoreDensityThreshold { threshold } => Some(gen_cf_function(
+            *threshold,
+            score_map,
+            cache_key_config.as_ref(),
+        )),
     };
 
     let config = serde_json::json!({
@@ -347,12 +352,14 @@ fn compile_cloudfront(
             "capacity_bytes": ir.capacity_bytes,
         },
         "cache_behaviors": cache_behaviors,
+        "cache_key_config": cache_key_config,
         "prewarm_paths": ir.prewarm_set,
         "cloudfront_function": function_code,
         "_deploy_steps": [
             "1. Update distribution CacheBehaviors via AWS CLI or Console",
-            "2. If cloudfront_function is present, create CloudFront Function and associate",
-            "3. Warm prewarm_paths via CloudFront invalidation or direct requests",
+            "2. Apply cache_key_config to CloudFront Cache Policy / Function normalization logic",
+            "3. If cloudfront_function is present, create CloudFront Function and associate",
+            "4. Warm prewarm_paths via CloudFront invalidation or direct requests",
         ]
     });
 
@@ -392,7 +399,40 @@ fn content_type_to_cf_path(ct: &str) -> &str {
     }
 }
 
-fn gen_cf_function(threshold: f64, score_map: Option<&HashMap<String, f64>>) -> String {
+fn compile_cache_key_config(
+    cache_key_rules: &[qc_model::policy_ir::CacheKeyRule],
+) -> Option<serde_json::Value> {
+    if cache_key_rules.is_empty() {
+        return None;
+    }
+
+    let query_params_to_strip: Vec<&str> = cache_key_rules
+        .iter()
+        .filter_map(|r| {
+            if r.pattern.contains("utm_") {
+                Some("utm_*")
+            } else if r.pattern.contains("fbclid") {
+                Some("fbclid")
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Some(serde_json::json!({
+        "query_string_strip": query_params_to_strip,
+        "_note": "Map to CloudFront Cache Policy / Function query normalization",
+        "_rules": cache_key_rules.iter().map(|r| {
+            serde_json::json!({"pattern": &r.pattern, "replacement": &r.replacement})
+        }).collect::<Vec<_>>()
+    }))
+}
+
+fn gen_cf_function(
+    threshold: f64,
+    score_map: Option<&HashMap<String, f64>>,
+    cache_key_config: Option<&serde_json::Value>,
+) -> String {
     let scores_js = if let Some(map) = score_map {
         let entries: Vec<String> = map
             .iter()
@@ -404,12 +444,53 @@ fn gen_cf_function(threshold: f64, score_map: Option<&HashMap<String, f64>>) -> 
         "{ /* qc compile --scores policy.json */ }".to_string()
     };
 
+    let strip_params = cache_key_config
+        .and_then(|cfg| cfg["query_string_strip"].as_array())
+        .map(|params| {
+            params
+                .iter()
+                .filter_map(|p| p.as_str())
+                .map(|p| format!("'{p}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+
     format!(
         r#"// quant-cache admission gate (CloudFront Function)
 var SCORES = {scores_js};
+var STRIP_PARAMS = [{strip_params}];
+
+function shouldStripParam(name) {{
+  for (var i = 0; i < STRIP_PARAMS.length; i++) {{
+    var pattern = STRIP_PARAMS[i];
+    if (pattern.endsWith('*')) {{
+      if (name.startsWith(pattern.slice(0, -1))) return true;
+    }} else if (name === pattern) {{
+      return true;
+    }}
+  }}
+  return false;
+}}
+
+function normalizedKey(request) {{
+  var query = request.querystring || {{}};
+  var parts = [];
+  var names = Object.keys(query).sort();
+  for (var i = 0; i < names.length; i++) {{
+    var name = names[i];
+    if (shouldStripParam(name)) continue;
+    var entry = query[name];
+    if (entry && typeof entry.value !== 'undefined') {{
+      parts.push(name + '=' + entry.value);
+    }}
+  }}
+  return parts.length ? request.uri + '?' + parts.join('&') : request.uri;
+}}
+
 function handler(event) {{
   var request = event.request;
-  var key = request.uri;
+  var key = normalizedKey(request);
   if (!SCORES[key] || SCORES[key] <= {threshold}) {{
     request.headers['x-qc-bypass'] = {{ value: 'true' }};
   }}
