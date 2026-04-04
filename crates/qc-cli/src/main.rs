@@ -35,7 +35,7 @@ enum Commands {
     Compare(compare::CompareArgs),
     /// Calibrate economic parameters using train/validation traces
     Calibrate(calibrate::CalibrateArgs),
-    /// Generate deployment scaffold from PolicyIR (Cloudflare)
+    /// Generate deployment scaffold from PolicyIR (Cloudflare/CloudFront/Fastly)
     Compile(compile::CompileArgs),
     /// Pre-deploy safety check: replay PolicyIR and verify thresholds
     DeployCheck(deploy_check::DeployCheckArgs),

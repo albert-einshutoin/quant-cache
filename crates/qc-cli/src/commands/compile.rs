@@ -37,11 +37,34 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
     let score_map = if let Some(ref scores_path) = args.scores {
         let pf_str = std::fs::read_to_string(scores_path)?;
         let pf: PolicyFile = serde_json::from_str(&pf_str)?;
-        let map: HashMap<String, f64> = pf
-            .decisions
+
+        // Normalize score keys through cache_key_rules to match runtime lookups
+        let key_regexes: Vec<(regex::Regex, String)> = ir
+            .cache_key_rules
             .iter()
-            .map(|d| (d.cache_key.clone(), d.score))
+            .filter_map(|r| {
+                regex::Regex::new(&r.pattern)
+                    .ok()
+                    .map(|re| (re, r.replacement.clone()))
+            })
             .collect();
+
+        let normalize = |key: &str| -> String {
+            let mut k = key.to_string();
+            for (re, repl) in &key_regexes {
+                k = re.replace_all(&k, repl.as_str()).to_string();
+            }
+            k
+        };
+
+        let mut map: HashMap<String, f64> = HashMap::new();
+        for d in &pf.decisions {
+            let nk = normalize(&d.cache_key);
+            let entry = map.entry(nk).or_insert(0.0);
+            if d.score > *entry {
+                *entry = d.score;
+            }
+        }
         Some(map)
     } else {
         None
@@ -668,7 +691,7 @@ fn validate_cloudfront(config: &serde_json::Value) -> Vec<String> {
                 func.len()
             ));
         }
-        if func.contains("/* populate") {
+        if func.contains("/* qc compile --scores") || func.contains("/* populate") {
             issues.push("CloudFront Function contains unpopulated placeholder".into());
         }
     }
@@ -767,7 +790,7 @@ fn compile_fastly(
     if let Some((table, recv_snippet)) = &admission_vcl {
         vcl_snippets.push(serde_json::json!({
             "name": "qc-admission-table",
-            "type": "init",
+            "type": "none",
             "priority": 5,
             "content": table
         }));
@@ -839,7 +862,7 @@ fn compile_fastly_bypass(rule: &BypassRule) -> String {
     match rule {
         BypassRule::None => String::new(),
         BypassRule::SizeLimit { max_bytes } => {
-            format!("  # Bypass objects > {max_bytes} bytes\n  # (Fastly: implement in vcl_fetch with beresp.http.Content-Length check)")
+            format!("  if (std.atoi(beresp.http.Content-Length) > {max_bytes}) {{\n    set beresp.ttl = 0s;\n    set beresp.uncacheable = true;\n  }}")
         }
         BypassRule::FreshnessRisk { .. } => {
             "  if (req.url ~ \"^/api/\") {\n    return(pass);\n  }".into()

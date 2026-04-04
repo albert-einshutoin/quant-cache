@@ -126,8 +126,9 @@ Observed optimality gap: **median 0.01%, p95 0.72%** (n=1000, 50 cases).
 | `qc calibrate` | Auto-tune economic parameters using train/validation split |
 | `qc policy-eval` | Evaluate PolicyIR configurations on traces |
 | `qc policy-search` | Search backend/admission/bypass/prewarm space for best config |
-| `qc compile` | Generate deployment scaffold + validate (Cloudflare/CloudFront) |
+| `qc compile` | Generate deployment scaffold + validate (Cloudflare/CloudFront/Fastly) |
 | `qc deploy-check` | Pre-deploy safety check (LRU/SIEVE comparison + thresholds) |
+| `qc compile-compare` | Compile same PolicyIR to all 3 providers and compare |
 
 ## Baselines
 
@@ -159,7 +160,7 @@ quant-cache/
 │   ├── qc-model/      Data types, configs, presets, economic parameters
 │   ├── qc-solver/     BenefitCalculator, GreedySolver, ExactIlpSolver, SA solver, calibration
 │   ├── qc-simulate/   Replay engine, 5 baseline policies, synthetic generator, co-access
-│   └── qc-cli/        CLI (11 commands: import → generate → optimize → policy-search → policy-eval → compile → deploy-check)
+│   └── qc-cli/        CLI (12 commands: import → generate → optimize → policy-search → policy-eval → compile → deploy-check → compile-compare)
 ├── data/samples/      Sample traces and configs
 └── docs/              Design documents, related work (29 papers)
 ```

@@ -354,7 +354,7 @@ where
     let mut evaluated = 1;
 
     let initial_temp = 10.0;
-    let cooling_rate = 1.0 - (3.0 / config.max_iterations as f64);
+    let cooling_rate = (1.0 - (3.0 / config.max_iterations.max(10) as f64)).max(0.9);
     let mut temp = initial_temp;
 
     for _ in 0..config.max_iterations {
