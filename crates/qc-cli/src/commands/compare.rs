@@ -65,6 +65,9 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         co_access_top_k: 0,
         ilp: false,
         scoring: None,
+        purge_group_weight: 0.0,
+        origin_group_weight: 0.0,
+        group_top_k: 50,
     };
     let config = super::optimize::load_config(&opt_args)?;
 

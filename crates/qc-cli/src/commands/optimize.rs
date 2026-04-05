@@ -55,6 +55,18 @@ pub struct OptimizeArgs {
     /// Overrides scoring_version in config file when specified.
     #[arg(long)]
     pub scoring: Option<String>,
+
+    /// Purge-group consistency bonus weight (for SA solver, 0 = disabled)
+    #[arg(long, default_value_t = 0.0)]
+    pub purge_group_weight: f64,
+
+    /// Origin-group burst shielding bonus weight (for SA solver, 0 = disabled)
+    #[arg(long, default_value_t = 0.0)]
+    pub origin_group_weight: f64,
+
+    /// Max pairwise interactions per group (sparsity control)
+    #[arg(long, default_value_t = 50)]
+    pub group_top_k: usize,
 }
 
 pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
@@ -97,37 +109,68 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
                 PairwiseInteraction, QuadraticProblem, QuadraticSolver, SimulatedAnnealingSolver,
             };
 
-            // Build co-access interactions
-            let interactions = if args.co_access_window_ms > 0 {
+            // Shared cache_key → index map for all interaction types
+            let key_to_idx: std::collections::HashMap<&str, u32> = scored
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (s.cache_key.as_str(), i as u32))
+                .collect();
+
+            let pairs_to_interactions =
+                |pairs: &[qc_simulate::co_access::CoAccessPair]| -> Vec<PairwiseInteraction> {
+                    pairs
+                        .iter()
+                        .filter_map(|p| {
+                            let i = key_to_idx.get(p.key_a.as_str())?;
+                            let j = key_to_idx.get(p.key_b.as_str())?;
+                            Some(PairwiseInteraction {
+                                i: *i,
+                                j: *j,
+                                weight: p.weight,
+                            })
+                        })
+                        .collect()
+                };
+
+            let mut interactions = Vec::new();
+
+            // 1. Co-access interactions
+            if args.co_access_window_ms > 0 {
                 let pairs = qc_simulate::co_access::extract_co_access(
                     &events,
                     args.co_access_window_ms,
                     args.co_access_top_k,
                 );
-                // Build cache_key → index map
-                let key_to_idx: std::collections::HashMap<&str, u32> = scored
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| (s.cache_key.as_str(), i as u32))
-                    .collect();
+                let co_access = pairs_to_interactions(&pairs);
+                tracing::info!(count = co_access.len(), "co-access interactions");
+                interactions.extend(co_access);
+            }
 
-                pairs
-                    .iter()
-                    .filter_map(|p| {
-                        let i = key_to_idx.get(p.key_a.as_str())?;
-                        let j = key_to_idx.get(p.key_b.as_str())?;
-                        Some(PairwiseInteraction {
-                            i: *i,
-                            j: *j,
-                            weight: p.weight,
-                        })
-                    })
-                    .collect()
-            } else {
-                vec![]
-            };
+            // 2. Purge-group consistency bonus
+            if args.purge_group_weight > 0.0 {
+                let pairs = qc_simulate::group_interactions::extract_purge_group_interactions(
+                    &features,
+                    args.purge_group_weight,
+                    args.group_top_k,
+                );
+                let purge = pairs_to_interactions(&pairs);
+                tracing::info!(count = purge.len(), "purge-group interactions");
+                interactions.extend(purge);
+            }
 
-            tracing::info!(interactions = interactions.len(), "co-access pairs");
+            // 3. Origin-group burst shielding bonus
+            if args.origin_group_weight > 0.0 {
+                let pairs = qc_simulate::group_interactions::extract_origin_group_interactions(
+                    &features,
+                    args.origin_group_weight,
+                    args.group_top_k,
+                );
+                let origin = pairs_to_interactions(&pairs);
+                tracing::info!(count = origin.len(), "origin-group interactions");
+                interactions.extend(origin);
+            }
+
+            tracing::info!(total = interactions.len(), "total quadratic interactions");
 
             let problem = QuadraticProblem {
                 objects: scored.clone(),

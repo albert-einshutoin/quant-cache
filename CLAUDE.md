@@ -43,6 +43,7 @@ Scoring and solving are separated:
 - `crates/qc-simulate/src/baselines.rs` — LRU, GDSF, SIEVE, S3-FIFO, Belady, EconAdmission hybrids
 - `crates/qc-simulate/src/synthetic.rs` — trace generator (Zipf α default: 0.6)
 - `crates/qc-simulate/src/co_access.rs` — co-occurrence extraction for quadratic terms
+- `crates/qc-simulate/src/group_interactions.rs` — purge-group + origin-group interaction extraction
 - `crates/qc-cli/src/providers/cloudfront.rs` — CloudFront log parser
 - `crates/qc-cli/src/commands/compile.rs` — Cloudflare/CloudFront compiler + --validate
 - `crates/qc-cli/src/commands/deploy_check.rs` — Pre-deploy safety gate

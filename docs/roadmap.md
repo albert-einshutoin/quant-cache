@@ -143,20 +143,22 @@ p_hit = exp(-reuse_distance_p50 / cache_capacity_objects)
 
 ---
 
-## V2.0 — QUBO with Quadratic Terms
+## V2.0 — QUBO with Quadratic Terms (DONE)
 
 **Goal:** Introduce pairwise interactions for co-access, purge-group, origin-group
 
 ### Deliverables
 
-| Item | Description |
-|------|-------------|
-| QuadraticProblem type | linear_terms + sparse PairwiseInteraction list |
-| QuadraticSolver trait | Separate from linear Solver trait |
-| Co-access extraction | Time-window co-occurrence counting from traces |
-| SA solver | Simulated annealing for QUBO |
-| Purge-group consistency term | Partial cache penalty |
-| Origin-group burst shielding | Shared origin bonus |
+| Item | Description | Status |
+|------|-------------|--------|
+| QuadraticProblem type | linear_terms + sparse PairwiseInteraction list | Done |
+| QuadraticSolver trait | Separate from linear Solver trait | Done |
+| Co-access extraction | Time-window co-occurrence counting from traces | Done |
+| SA solver | Simulated annealing for QUBO | Done |
+| Purge-group consistency term | Co-caching bonus for same purge group (`--purge-group-weight`) | Done |
+| Origin-group burst shielding | Co-caching bonus for same origin (`--origin-group-weight`) | Done |
+| Synthetic group generation | `num_purge_groups` / `num_origin_groups` in SyntheticConfig | Done |
+| Interaction composition | Co-access + purge + origin merged in SA solver | Done |
 
 ### Data Requirements
 

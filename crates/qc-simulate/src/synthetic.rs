@@ -30,6 +30,10 @@ pub struct SyntheticConfig {
     pub latency_saving_ms: f64,
     /// Random seed for reproducibility.
     pub seed: u64,
+    /// Number of distinct purge groups (0 = no purge groups).
+    pub num_purge_groups: usize,
+    /// Number of distinct origin groups (0 = no origin groups).
+    pub num_origin_groups: usize,
 }
 
 impl Default for SyntheticConfig {
@@ -47,6 +51,8 @@ impl Default for SyntheticConfig {
             origin_cost: 0.003,
             latency_saving_ms: 50.0,
             seed: 42,
+            num_purge_groups: 0,
+            num_origin_groups: 0,
         }
     }
 }
@@ -62,6 +68,8 @@ struct ObjectProperties {
     latency_saving_ms: f64,
     update_rate: f64,
     stale_penalty_class: qc_model::scenario::StalePenaltyClass,
+    purge_group: Option<String>,
+    origin_group: Option<String>,
 }
 
 /// Generate a synthetic trace from the given configuration.
@@ -128,6 +136,16 @@ pub fn generate(config: &SyntheticConfig) -> Result<Vec<RequestTraceEvent>, Simu
                 latency_saving_ms: latency_saving,
                 update_rate,
                 stale_penalty_class: penalty,
+                purge_group: if config.num_purge_groups > 0 {
+                    Some(format!("purge-{}", i % config.num_purge_groups))
+                } else {
+                    None
+                },
+                origin_group: if config.num_origin_groups > 0 {
+                    Some(format!("origin-{}", i % config.num_origin_groups))
+                } else {
+                    None
+                },
             }
         })
         .collect();
@@ -326,7 +344,7 @@ pub fn aggregate_features_with_options(
                 update_rate,
                 last_modified: None,
                 stale_penalty_class: stale_class,
-                purge_group: None,
+                purge_group: None, // populated by assign_synthetic_groups if needed
                 origin_group: None,
                 mean_reuse_distance: rd.map(|r| r.mean),
                 reuse_distance_p50: rd.map(|r| r.p50),
@@ -334,4 +352,35 @@ pub fn aggregate_features_with_options(
             }
         })
         .collect()
+}
+
+/// Assign purge_group and origin_group to features based on SyntheticConfig.
+///
+/// Uses a deterministic mapping from `cache_key` → object index (parsing the
+/// numeric suffix from `/content/NNNNNN`), then assigns groups via modular
+/// arithmetic matching the `generate()` function's assignment.
+///
+/// For non-synthetic traces, groups should be populated from external metadata
+/// (e.g., config file mapping URL patterns to groups).
+pub fn assign_synthetic_groups(
+    features: &mut [qc_model::object::ObjectFeatures],
+    config: &SyntheticConfig,
+) {
+    for f in features.iter_mut() {
+        // Parse object index from cache_key format "/content/NNNNNN"
+        let idx = f
+            .cache_key
+            .rsplit('/')
+            .next()
+            .and_then(|s| s.parse::<usize>().ok());
+
+        if let Some(i) = idx {
+            if config.num_purge_groups > 0 {
+                f.purge_group = Some(format!("purge-{}", i % config.num_purge_groups));
+            }
+            if config.num_origin_groups > 0 {
+                f.origin_group = Some(format!("origin-{}", i % config.num_origin_groups));
+            }
+        }
+    }
 }

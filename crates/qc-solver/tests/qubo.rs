@@ -126,3 +126,126 @@ fn sa_negative_benefit_excluded() {
         .any(|d| d.cache_key == "/bad" && d.cache);
     assert!(!bad_cached, "negative benefit object should not be cached");
 }
+
+#[test]
+fn sa_purge_group_consistency_bonus() {
+    // Two objects in same "purge group" get a co-caching bonus.
+    // Without bonus: solver picks c (25) + a or b (10) = 35
+    // With bonus: a + b = 10 + 10 + 25(bonus) = 45
+    let objects = vec![
+        scored("purge-a", 300, 10.0),
+        scored("purge-b", 300, 10.0),
+        scored("solo-c", 300, 25.0),
+    ];
+    let problem = QuadraticProblem {
+        objects,
+        interactions: vec![PairwiseInteraction {
+            i: 0,
+            j: 1,
+            weight: 25.0, // consistency bonus for co-caching purge group
+        }],
+        capacity_bytes: 600,
+    };
+    let solver = SimulatedAnnealingSolver {
+        max_iterations: 50_000,
+        ..Default::default()
+    };
+    let result = solver.solve(&problem).unwrap();
+
+    // SA should prefer a+b (obj=45) over c+anything (obj=35)
+    let a_cached = result
+        .decisions
+        .iter()
+        .any(|d| d.cache_key == "/purge-a" && d.cache);
+    let b_cached = result
+        .decisions
+        .iter()
+        .any(|d| d.cache_key == "/purge-b" && d.cache);
+    assert!(
+        result.objective_value >= 40.0,
+        "purge group bonus should yield high objective: got {}",
+        result.objective_value
+    );
+    assert!(
+        a_cached && b_cached,
+        "SA should co-cache purge group objects: a={a_cached}, b={b_cached}"
+    );
+}
+
+#[test]
+fn sa_origin_group_burst_shielding() {
+    // Objects sharing an origin get a bonus for co-caching (burst shielding).
+    // 4 objects, capacity fits 2. Origin pair has bonus making them preferred.
+    let objects = vec![
+        scored("origin-a", 200, 8.0),
+        scored("origin-b", 200, 8.0),
+        scored("other-c", 200, 12.0),
+        scored("other-d", 200, 11.0),
+    ];
+    // Without bonus: c(12) + d(11) = 23
+    // With bonus: a(8) + b(8) + 15(bonus) = 31
+    let problem = QuadraticProblem {
+        objects,
+        interactions: vec![PairwiseInteraction {
+            i: 0,
+            j: 1,
+            weight: 15.0, // origin burst shielding bonus
+        }],
+        capacity_bytes: 400,
+    };
+    let solver = SimulatedAnnealingSolver {
+        max_iterations: 50_000,
+        ..Default::default()
+    };
+    let result = solver.solve(&problem).unwrap();
+
+    assert!(
+        result.objective_value >= 23.0,
+        "origin bonus should beat linear optimum: got {}",
+        result.objective_value
+    );
+}
+
+#[test]
+fn sa_mixed_interactions_co_access_plus_groups() {
+    // Combine co-access and group interactions in the same problem.
+    let objects = vec![
+        scored("a", 200, 10.0), // origin group with b
+        scored("b", 200, 10.0), // origin group with a
+        scored("c", 200, 10.0), // co-access with d
+        scored("d", 200, 10.0), // co-access with c
+        scored("e", 200, 15.0), // solo, highest linear
+    ];
+    // Capacity fits 2 objects (400 bytes)
+    // Linear best: e(15) + any(10) = 25
+    // With interactions: a+b get origin bonus(12) = 10+10+12 = 32
+    //                    c+d get co-access bonus(8) = 10+10+8 = 28
+    let problem = QuadraticProblem {
+        objects,
+        interactions: vec![
+            PairwiseInteraction {
+                i: 0,
+                j: 1,
+                weight: 12.0, // origin-group bonus
+            },
+            PairwiseInteraction {
+                i: 2,
+                j: 3,
+                weight: 8.0, // co-access bonus
+            },
+        ],
+        capacity_bytes: 400,
+    };
+    let solver = SimulatedAnnealingSolver {
+        max_iterations: 50_000,
+        ..Default::default()
+    };
+    let result = solver.solve(&problem).unwrap();
+
+    // SA should find a+b as optimal (32 > 28 > 25)
+    assert!(
+        result.objective_value >= 25.0,
+        "mixed interactions: should beat linear, got {}",
+        result.objective_value
+    );
+}
