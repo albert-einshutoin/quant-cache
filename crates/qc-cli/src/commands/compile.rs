@@ -272,12 +272,12 @@ fn compile_cf_bypass(rule: &BypassRule, rules: &mut Vec<serde_json::Value>) {
 
 fn gen_cf_worker(threshold: f64, mode: &str, score_map: Option<&HashMap<String, f64>>) -> String {
     let scores_js = if let Some(map) = score_map {
-        let entries: Vec<String> = map
+        let safe_map: HashMap<&str, f64> = map
             .iter()
             .filter(|(_, &v)| v > threshold)
-            .map(|(k, v)| format!("  \"{k}\": {v:.4}"))
+            .map(|(k, &v)| (k.as_str(), (v * 10000.0).round() / 10000.0))
             .collect();
-        format!("{{\n{}\n}}", entries.join(",\n"))
+        serde_json::to_string_pretty(&safe_map).unwrap_or_else(|_| "{}".into())
     } else {
         "{\n  // Run: qc compile --scores <policy.json> to populate\n}".to_string()
     };
@@ -465,12 +465,12 @@ fn gen_cf_function(
     cache_key_config: Option<&serde_json::Value>,
 ) -> String {
     let scores_js = if let Some(map) = score_map {
-        let entries: Vec<String> = map
+        let safe_map: HashMap<&str, f64> = map
             .iter()
             .filter(|(_, &v)| v > threshold)
-            .map(|(k, v)| format!("  '{k}': {v:.4}"))
+            .map(|(k, &v)| (k.as_str(), (v * 10000.0).round() / 10000.0))
             .collect();
-        format!("{{\n{}\n}}", entries.join(",\n"))
+        serde_json::to_string_pretty(&safe_map).unwrap_or_else(|_| "{}".into())
     } else {
         "{ /* qc compile --scores policy.json */ }".to_string()
     };
@@ -772,7 +772,10 @@ fn compile_fastly(
             let table_entries: Vec<String> = if let Some(map) = score_map {
                 map.iter()
                     .filter(|(_, &v)| v > *threshold)
-                    .map(|(k, _)| format!("  \"{k}\": \"1\""))
+                    .map(|(k, _)| {
+                        let escaped = k.replace('\\', "\\\\").replace('"', "\\\"");
+                        format!("  \"{escaped}\": \"1\"")
+                    })
                     .collect()
             } else {
                 vec!["  # Run: qc compile --scores policy.json to populate".into()]
@@ -1051,9 +1054,22 @@ fn compile_akamai_bypass(rule: &BypassRule, children: &mut Vec<serde_json::Value
     match rule {
         BypassRule::None => {}
         BypassRule::SizeLimit { max_bytes } => {
+            // Akamai PAPI has no native response-size criterion.
+            // Emit as advisory-only (not an active rule) to avoid disabling
+            // cache for all traffic. Size-based bypass requires an EdgeWorker
+            // that checks Content-Length and sets a bypass header.
             children.push(serde_json::json!({
-                "name": format!("qc: bypass objects > {} bytes", max_bytes),
-                "criteria": [],
+                "name": format!("qc: bypass objects > {} bytes (ADVISORY)", max_bytes),
+                "criteria": [{
+                    "name": "requestHeader",
+                    "options": {
+                        "headerName": "X-QC-Size-Bypass",
+                        "matchOperator": "IS_ONE_OF",
+                        "values": ["true"],
+                        "matchWildcardName": false,
+                        "matchCaseSensitiveValue": false
+                    }
+                }],
                 "behaviors": [
                     {
                         "name": "caching",
@@ -1064,7 +1080,8 @@ fn compile_akamai_bypass(rule: &BypassRule, children: &mut Vec<serde_json::Value
                 "criteriaMustSatisfy": "all",
                 "_note": format!(
                     "Akamai PAPI has no native content-length criterion. \
-                     Map to path patterns or use EdgeWorker for size > {} bytes.",
+                     Deploy an EdgeWorker that sets X-QC-Size-Bypass: true \
+                     for responses > {} bytes, then this rule activates.",
                     max_bytes
                 )
             }));
@@ -1115,12 +1132,13 @@ fn gen_akamai_edgeworker(
     score_map: Option<&HashMap<String, f64>>,
 ) -> String {
     let scores_js = if let Some(map) = score_map {
-        let entries: Vec<String> = map
+        // Use JSON serialization to safely escape keys (prevents JS injection)
+        let safe_map: HashMap<&str, f64> = map
             .iter()
             .filter(|(_, &v)| v > threshold)
-            .map(|(k, v)| format!("  '{k}': {v:.4}"))
+            .map(|(k, &v)| (k.as_str(), (v * 10000.0).round() / 10000.0))
             .collect();
-        format!("{{\n{}\n}}", entries.join(",\n"))
+        serde_json::to_string_pretty(&safe_map).unwrap_or_else(|_| "{}".into())
     } else {
         "{ /* Run: qc compile --scores policy.json to populate */ }".to_string()
     };

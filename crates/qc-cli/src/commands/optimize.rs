@@ -76,8 +76,36 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
     let config = load_config(args)?;
     let compute_reuse =
         config.scoring_version == qc_model::scenario::ScoringVersion::V2ReuseDistance;
-    let features =
+    let mut features =
         synthetic::aggregate_features_with_options(&events, args.time_window, compute_reuse);
+
+    // If group interactions are requested, check if features have groups populated.
+    // For synthetic traces (/content/NNNNNN format), auto-assign groups.
+    let needs_groups = args.purge_group_weight > 0.0 || args.origin_group_weight > 0.0;
+    if needs_groups {
+        let has_groups = features
+            .iter()
+            .any(|f| f.purge_group.is_some() || f.origin_group.is_some());
+        if !has_groups {
+            // Try synthetic group assignment (works for /content/NNNNNN keys)
+            let syn_config = synthetic::SyntheticConfig {
+                num_purge_groups: 20,
+                num_origin_groups: 5,
+                ..Default::default()
+            };
+            synthetic::assign_synthetic_groups(&mut features, &syn_config);
+            let assigned = features.iter().any(|f| f.purge_group.is_some());
+            if assigned {
+                tracing::info!("auto-assigned synthetic groups (20 purge, 5 origin)");
+            } else {
+                tracing::warn!(
+                    "group interaction weights set but no groups found in features. \
+                     For real traces, populate purge_group/origin_group via config."
+                );
+            }
+        }
+    }
+
     tracing::info!(objects = features.len(), "aggregated object features");
 
     let scored = BenefitCalculator::score_all(&features, &config)?;
