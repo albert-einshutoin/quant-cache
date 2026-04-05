@@ -137,6 +137,7 @@ fn policy_decision_roundtrip() {
         cache_key: "/img/logo.svg".into(),
         cache: true,
         score: 42.0,
+        size_bytes: 1024,
         score_breakdown: ScoreBreakdown {
             expected_hit_benefit: 50.0,
             freshness_cost: 8.0,

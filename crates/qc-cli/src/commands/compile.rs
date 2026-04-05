@@ -57,12 +57,22 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
             k
         };
 
+        let use_density = matches!(
+            ir.admission_rule,
+            AdmissionRule::ScoreDensityThreshold { .. }
+        );
+
         let mut map: HashMap<String, f64> = HashMap::new();
         for d in &pf.decisions {
             let nk = normalize(&d.cache_key);
+            let value = if use_density && d.size_bytes > 0 {
+                d.score / d.size_bytes as f64
+            } else {
+                d.score
+            };
             let entry = map.entry(nk).or_insert(0.0);
-            if d.score > *entry {
-                *entry = d.score;
+            if value > *entry {
+                *entry = value;
             }
         }
         Some(map)

@@ -154,9 +154,18 @@ pub fn generate(config: &SyntheticConfig) -> Result<Vec<RequestTraceEvent>, Simu
     let zipf = Zipf::new(config.num_objects as u64, config.zipf_alpha)
         .map_err(|e| SimulateError::GenerationError(e.to_string()))?;
 
+    if config.time_window_seconds == 0 {
+        return Err(SimulateError::GenerationError(
+            "time_window_seconds must be > 0".into(),
+        ));
+    }
+
     // Use a fixed epoch so traces are deterministic with the same seed.
     let base_time = chrono::DateTime::from_timestamp(0, 0).unwrap_or_else(Utc::now);
-    let window_ms = config.time_window_seconds * 1000;
+    let window_ms = config
+        .time_window_seconds
+        .checked_mul(1000)
+        .ok_or_else(|| SimulateError::GenerationError("time_window_seconds overflow".into()))?;
 
     // Pre-compute version change schedule per object.
     // Each object gets a list of timestamps when its version changes.
@@ -299,7 +308,11 @@ pub fn aggregate_features_with_options(
         }
     }
 
-    let tw = time_window_seconds as f64;
+    let tw = if time_window_seconds > 0 {
+        time_window_seconds as f64
+    } else {
+        return vec![];
+    };
 
     map.into_iter()
         .map(|(cache_key, acc)| {

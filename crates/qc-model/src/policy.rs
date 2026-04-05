@@ -7,6 +7,8 @@ pub struct PolicyDecision {
     pub cache_key: String,
     pub cache: bool,
     pub score: f64,
+    #[serde(default)]
+    pub size_bytes: u64,
     pub score_breakdown: ScoreBreakdown,
 }
 

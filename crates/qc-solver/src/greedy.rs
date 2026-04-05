@@ -124,6 +124,7 @@ fn make_decision(obj: &ScoredObject, cache: bool) -> PolicyDecision {
         cache_key: obj.cache_key.clone(),
         cache,
         score: obj.net_benefit,
+        size_bytes: obj.size_bytes,
         score_breakdown: ScoreBreakdown {
             expected_hit_benefit: obj.score_breakdown.expected_hit_benefit,
             freshness_cost: obj.score_breakdown.freshness_cost,

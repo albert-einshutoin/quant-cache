@@ -66,6 +66,12 @@ impl BenefitCalculator {
 
         let freshness_cost = Self::compute_freshness_cost(object, config, expected_requests);
         let net_benefit = expected_hit_benefit - freshness_cost;
+        // Clamp non-finite values (NaN/Inf from malformed input) to 0.
+        let net_benefit = if net_benefit.is_finite() {
+            net_benefit
+        } else {
+            0.0
+        };
 
         Ok(ScoredObject {
             object_id: object.object_id.clone(),
@@ -147,6 +153,11 @@ impl BenefitCalculator {
         // For InvalidationOnUpdate, the parameter is unused (cost is per-update).
         let freshness_cost = Self::compute_freshness_cost(object, config, expected_hits);
         let net_benefit = expected_hit_benefit - freshness_cost;
+        let net_benefit = if net_benefit.is_finite() {
+            net_benefit
+        } else {
+            0.0
+        };
 
         Ok(ScoredObject {
             object_id: object.object_id.clone(),

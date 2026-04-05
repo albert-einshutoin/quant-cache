@@ -1,6 +1,9 @@
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use qc_model::trace::RequestTraceEvent;
-use qc_simulate::baselines::{GdsfPolicy, LruPolicy, StaticPolicy};
+use qc_simulate::baselines::{
+    BeladyPolicy, EconS3FifoPolicy, EconSievePolicy, GdsfPolicy, LruPolicy, S3FifoPolicy,
+    SievePolicy, StaticPolicy,
+};
 use qc_simulate::comparator::Comparator;
 use qc_simulate::engine::{CacheOutcome, CachePolicy, TraceReplayEngine};
 use qc_simulate::error::SimulateError;
@@ -352,4 +355,154 @@ fn four_policy_comparison() {
             r.metrics.byte_hit_ratio * 100.0,
         );
     }
+}
+
+// ── Helper for timed events ────────────────────────────────────────
+
+fn make_timed_event(key: &str, size: u64, offset_secs: i64) -> RequestTraceEvent {
+    let base = chrono::DateTime::from_timestamp(1_000_000, 0).unwrap();
+    RequestTraceEvent {
+        schema_version: "1.0".into(),
+        timestamp: base + Duration::seconds(offset_secs),
+        object_id: key.into(),
+        cache_key: key.into(),
+        object_size_bytes: size,
+        response_bytes: None,
+        cache_status: None,
+        status_code: Some(200),
+        origin_fetch_cost: Some(0.01),
+        response_latency_ms: Some(50.0),
+        region: None,
+        content_type: None,
+        version_or_etag: Some("v1".to_string()),
+        eligible_for_cache: true,
+    }
+}
+
+// ── Belady Policy Tests ────────────────────────────────────────────
+
+#[test]
+fn belady_achieves_optimal_on_known_trace() {
+    let events: Vec<_> = ["a", "b", "c", "a", "b", "c"]
+        .iter()
+        .enumerate()
+        .map(|(i, &k)| make_timed_event(k, 200, i as i64))
+        .collect();
+    let mut belady = BeladyPolicy::new(&events, 400);
+    let metrics = TraceReplayEngine::replay(&events, &mut belady).unwrap();
+    assert!(metrics.cache_hits > 0, "Belady should get some hits");
+    assert!(metrics.hit_ratio > 0.0);
+}
+
+#[test]
+fn belady_never_exceeds_capacity() {
+    let events: Vec<_> = (0..100)
+        .map(|i| make_timed_event(&format!("obj-{}", i % 20), 100, i))
+        .collect();
+    let mut belady = BeladyPolicy::new(&events, 500);
+    let _metrics = TraceReplayEngine::replay(&events, &mut belady).unwrap();
+}
+
+// ── SIEVE Policy Tests ─────────────────────────────────────────────
+
+#[test]
+fn sieve_basic_hit_miss() {
+    let mut sieve = SievePolicy::new(400);
+    let e1 = make_timed_event("a", 200, 0);
+    assert_eq!(sieve.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 200, 1);
+    assert_eq!(sieve.on_request(&e2), CacheOutcome::Hit);
+}
+
+#[test]
+fn sieve_stale_hit_after_ttl_expiry() {
+    let mut sieve = SievePolicy::new(1000).with_ttl(10);
+    let e1 = make_timed_event("a", 100, 0);
+    assert_eq!(sieve.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 100, 5);
+    assert_eq!(sieve.on_request(&e2), CacheOutcome::Hit);
+    let e3 = make_timed_event("a", 100, 15);
+    assert_eq!(sieve.on_request(&e3), CacheOutcome::StaleHit);
+}
+
+// ── S3-FIFO Policy Tests ───────────────────────────────────────────
+
+#[test]
+fn s3fifo_basic_hit_miss() {
+    let mut s3fifo = S3FifoPolicy::new(1000);
+    let e1 = make_timed_event("a", 50, 0);
+    assert_eq!(s3fifo.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 50, 1);
+    assert_eq!(s3fifo.on_request(&e2), CacheOutcome::Hit);
+}
+
+#[test]
+fn s3fifo_stale_hit_after_ttl() {
+    let mut s3fifo = S3FifoPolicy::new(10000).with_ttl(10);
+    let e1 = make_timed_event("a", 100, 0);
+    assert_eq!(s3fifo.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 100, 5);
+    assert_eq!(s3fifo.on_request(&e2), CacheOutcome::Hit);
+    let e3 = make_timed_event("a", 100, 15);
+    assert_eq!(s3fifo.on_request(&e3), CacheOutcome::StaleHit);
+}
+
+// ── EconSieve Tests ────────────────────────────────────────────────
+
+#[test]
+fn econ_sieve_blocks_low_score_objects() {
+    let scores: std::collections::HashMap<String, f64> =
+        [("a".into(), 10.0), ("b".into(), -5.0)].into();
+    let mut policy = EconSievePolicy::new(scores, 1000).with_threshold(0.0);
+
+    let e1 = make_timed_event("a", 100, 0);
+    assert_eq!(policy.on_request(&e1), CacheOutcome::Miss); // admitted
+    let e2 = make_timed_event("a", 100, 1);
+    assert_eq!(policy.on_request(&e2), CacheOutcome::Hit);
+    let e3 = make_timed_event("b", 100, 2);
+    assert_eq!(policy.on_request(&e3), CacheOutcome::Miss); // rejected
+    let e4 = make_timed_event("b", 100, 3);
+    assert_eq!(policy.on_request(&e4), CacheOutcome::Miss); // still rejected
+}
+
+// ── EconS3FIFO Tests ───────────────────────────────────────────────
+
+#[test]
+fn econ_s3fifo_blocks_low_score_objects() {
+    let scores: std::collections::HashMap<String, f64> =
+        [("a".into(), 10.0), ("b".into(), -5.0)].into();
+    let mut policy = EconS3FifoPolicy::new(scores, 1000).with_threshold(0.0);
+
+    let e1 = make_timed_event("a", 100, 0);
+    assert_eq!(policy.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 100, 1);
+    assert_eq!(policy.on_request(&e2), CacheOutcome::Hit);
+    let e3 = make_timed_event("b", 100, 2);
+    assert_eq!(policy.on_request(&e3), CacheOutcome::Miss);
+    let e4 = make_timed_event("b", 100, 3);
+    assert_eq!(policy.on_request(&e4), CacheOutcome::Miss);
+}
+
+// ── GDSF div-by-zero guard ─────────────────────────────────────────
+
+#[test]
+fn gdsf_handles_zero_size_object() {
+    let mut gdsf = GdsfPolicy::new(1000);
+    let mut e = make_timed_event("zero", 0, 0);
+    e.object_size_bytes = 0;
+    let outcome = gdsf.on_request(&e);
+    assert_eq!(outcome, CacheOutcome::Miss);
+}
+
+// ── LRU stale detection ────────────────────────────────────────────
+
+#[test]
+fn lru_returns_stale_hit_after_ttl_expiry() {
+    let mut lru = LruPolicy::new(1000).with_ttl(10);
+    let e1 = make_timed_event("a", 100, 0);
+    assert_eq!(lru.on_request(&e1), CacheOutcome::Miss);
+    let e2 = make_timed_event("a", 100, 5);
+    assert_eq!(lru.on_request(&e2), CacheOutcome::Hit);
+    let e3 = make_timed_event("a", 100, 15);
+    assert_eq!(lru.on_request(&e3), CacheOutcome::StaleHit);
 }

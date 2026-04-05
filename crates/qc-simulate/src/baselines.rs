@@ -256,6 +256,9 @@ impl GdsfPolicy {
     }
 
     fn compute_priority(&self, cost: f64, freq: u64, size: u64) -> f64 {
+        if size == 0 {
+            return self.inflation;
+        }
         self.inflation + cost * freq as f64 / size as f64
     }
 
@@ -497,6 +500,8 @@ struct SieveEntry {
     size: u64,
     visited: bool,
     alive: bool,
+    insert_time: DateTime<Utc>,
+    version: Option<String>,
 }
 
 /// SIEVE eviction policy: FIFO queue + visited bit + hand pointer.
@@ -508,6 +513,7 @@ struct SieveEntry {
 pub struct SievePolicy {
     capacity_bytes: u64,
     used_bytes: u64,
+    ttl_seconds: u64,
     /// Circular queue with tombstones.
     queue: VecDeque<SieveEntry>,
     /// Fast lookup: cache_key → index in queue.
@@ -523,11 +529,17 @@ impl SievePolicy {
         Self {
             capacity_bytes,
             used_bytes: 0,
+            ttl_seconds: 3600,
             queue: VecDeque::new(),
             index: HashMap::new(),
             hand: 0,
             tombstones: 0,
         }
+    }
+
+    pub fn with_ttl(mut self, ttl_seconds: u64) -> Self {
+        self.ttl_seconds = ttl_seconds;
+        self
     }
 
     fn evict_one(&mut self) -> bool {
@@ -619,9 +631,22 @@ impl CachePolicy for SievePolicy {
         }
 
         if let Some(&idx) = self.index.get(&event.cache_key) {
-            // Hit: set visited = true (lazy promotion)
-            self.queue[idx].visited = true;
-            CacheOutcome::Hit
+            let entry = &mut self.queue[idx];
+            // Check stale before marking visited
+            let stale = check_stale(
+                entry.insert_time,
+                entry.version.as_deref(),
+                event,
+                self.ttl_seconds,
+            );
+            entry.visited = true;
+            if stale {
+                entry.insert_time = event.timestamp;
+                entry.version = event.version_or_etag.clone();
+                CacheOutcome::StaleHit
+            } else {
+                CacheOutcome::Hit
+            }
         } else {
             // Miss: insert at tail
             let size = event.object_size_bytes;
@@ -635,6 +660,8 @@ impl CachePolicy for SievePolicy {
                 size,
                 visited: false,
                 alive: true,
+                insert_time: event.timestamp,
+                version: event.version_or_etag.clone(),
             });
             self.index.insert(event.cache_key.clone(), idx);
             self.used_bytes += size;
@@ -649,6 +676,8 @@ impl CachePolicy for SievePolicy {
 pub(crate) struct S3FifoEntry {
     size: u64,
     freq: u8,
+    insert_time: DateTime<Utc>,
+    version: Option<String>,
 }
 
 /// S3-FIFO: three static FIFO queues with quick demotion.
@@ -665,6 +694,7 @@ pub struct S3FifoPolicy {
     main_capacity: u64,
     small_used: u64,
     main_used: u64,
+    ttl_seconds: u64,
     /// Small FIFO order
     small_order: VecDeque<String>,
     /// Main FIFO order
@@ -687,6 +717,7 @@ impl S3FifoPolicy {
             main_capacity,
             small_used: 0,
             main_used: 0,
+            ttl_seconds: 3600,
             small_order: VecDeque::new(),
             main_order: VecDeque::new(),
             in_small: HashMap::new(),
@@ -696,13 +727,18 @@ impl S3FifoPolicy {
         }
     }
 
+    pub fn with_ttl(mut self, ttl_seconds: u64) -> Self {
+        self.ttl_seconds = ttl_seconds;
+        self
+    }
+
     fn evict_small(&mut self) {
         while let Some(key) = self.small_order.pop_front() {
             if let Some(entry) = self.in_small.remove(&key) {
                 self.small_used -= entry.size;
                 if entry.freq > 0 {
-                    // Promote to main
-                    self.insert_main(&key, entry.size);
+                    // Promote to main (carry insert_time/version)
+                    self.insert_main_with_meta(&key, entry.size, entry.insert_time, entry.version);
                 } else {
                     // Quick demotion: discard (one-hit wonder)
                     self.ghost.insert(key);
@@ -731,6 +767,8 @@ impl S3FifoPolicy {
                         S3FifoEntry {
                             size: entry.size,
                             freq: entry.freq - 1,
+                            insert_time: entry.insert_time,
+                            version: entry.version,
                         },
                     );
                     self.main_used += entry.size;
@@ -742,15 +780,28 @@ impl S3FifoPolicy {
         false
     }
 
-    fn insert_main(&mut self, key: &str, size: u64) {
+    fn insert_main_with_meta(
+        &mut self,
+        key: &str,
+        size: u64,
+        insert_time: DateTime<Utc>,
+        version: Option<String>,
+    ) {
         while self.main_used + size > self.main_capacity && !self.in_main.is_empty() {
             if !self.evict_main() {
                 break;
             }
         }
         self.main_order.push_back(key.to_string());
-        self.in_main
-            .insert(key.to_string(), S3FifoEntry { size, freq: 0 });
+        self.in_main.insert(
+            key.to_string(),
+            S3FifoEntry {
+                size,
+                freq: 0,
+                insert_time,
+                version,
+            },
+        );
         self.main_used += size;
     }
 }
@@ -765,15 +816,37 @@ impl CachePolicy for S3FifoPolicy {
             return CacheOutcome::Bypass;
         }
 
-        // Check if in small queue — O(1) lookup + freq update
+        // Check if in small queue — O(1) lookup + freq update + stale check
         if let Some(entry) = self.in_small.get_mut(&event.cache_key) {
+            let stale = check_stale(
+                entry.insert_time,
+                entry.version.as_deref(),
+                event,
+                self.ttl_seconds,
+            );
             entry.freq = entry.freq.saturating_add(1).min(3);
+            if stale {
+                entry.insert_time = event.timestamp;
+                entry.version = event.version_or_etag.clone();
+                return CacheOutcome::StaleHit;
+            }
             return CacheOutcome::Hit;
         }
 
-        // Check if in main queue — O(1) lookup + freq update
+        // Check if in main queue — O(1) lookup + freq update + stale check
         if let Some(entry) = self.in_main.get_mut(&event.cache_key) {
+            let stale = check_stale(
+                entry.insert_time,
+                entry.version.as_deref(),
+                event,
+                self.ttl_seconds,
+            );
             entry.freq = entry.freq.saturating_add(1).min(3);
+            if stale {
+                entry.insert_time = event.timestamp;
+                entry.version = event.version_or_etag.clone();
+                return CacheOutcome::StaleHit;
+            }
             return CacheOutcome::Hit;
         }
 
@@ -800,6 +873,8 @@ impl CachePolicy for S3FifoPolicy {
             S3FifoEntry {
                 size,
                 freq: initial_freq,
+                insert_time: event.timestamp,
+                version: event.version_or_etag.clone(),
             },
         );
         self.small_used += size;
