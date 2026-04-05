@@ -773,7 +773,12 @@ fn compile_fastly(
                 map.iter()
                     .filter(|(_, &v)| v > *threshold)
                     .map(|(k, _)| {
-                        let escaped = k.replace('\\', "\\\\").replace('"', "\\\"");
+                        let escaped = k
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\n")
+                            .replace('\r', "\\r")
+                            .replace('\t', "\\t");
                         format!("  \"{escaped}\": \"1\"")
                     })
                     .collect()
