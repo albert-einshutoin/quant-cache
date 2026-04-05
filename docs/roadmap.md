@@ -17,9 +17,12 @@ quant-cache evolves from an evaluation framework into an **economic cache contro
 
 ```text
 Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
-  done       done        done        done        planned
+  done       done        done        done        done*
 evaluation  Policy IR   Policy      Deployment  Multi-vendor
 framework   + evaluator search      scaffold    + quantum
+
+V1.6 Reuse Distance Scoring: DONE
+(*Phase E: real deploy validation remains — requires production environment)
 ```
 
 ---
@@ -106,18 +109,32 @@ and lazy-image integration groundwork
 
 ---
 
-## V1.6 — Reuse Distance Scoring
+## V1.6 — Reuse Distance Scoring (DONE)
 
 **Goal:** Replace frequency-based demand estimation with reuse-distance-aware scoring
 
 ### Deliverables
 
-| Item | Description |
-|------|-------------|
-| Reuse distance computation | Per cache_key reuse distance distribution from trace |
-| BenefitCalculatorV2 | Scoring using reuse distance P50/P95 instead of raw request_count |
-| ObjectFeatures extension | mean_reuse_distance, reuse_distance_p50, reuse_distance_p95 |
-| A/B comparison | V1 scoring vs V2 scoring on same traces |
+| Item | Description | Status |
+|------|-------------|--------|
+| Reuse distance computation | Per cache_key reuse distance distribution from trace | Done |
+| BenefitCalculatorV2 | Hit probability via `exp(-rd_p50 / cache_capacity_objects)` | Done |
+| ObjectFeatures extension | mean_reuse_distance, reuse_distance_p50, reuse_distance_p95 | Done |
+| aggregate_features integration | Reuse distance auto-populated from trace | Done |
+| ScoringVersion config | `scoring_version` field in ScenarioConfig (v1_frequency / v2_reuse_distance) | Done |
+| CLI `--scoring v2` flag | `qc optimize --scoring v2` for reuse-distance scoring | Done |
+| A/B comparison | V1 vs V2 scoring tests on synthetic traces (16 tests) | Done |
+
+### Hit Probability Model
+
+```
+p_hit = exp(-reuse_distance_p50 / cache_capacity_objects)
+```
+
+- `cache_capacity_objects = capacity_bytes / object_size_bytes`
+- Low reuse distance (high locality) → p_hit ≈ 1.0 (near V1)
+- High reuse distance (low locality) → p_hit → 0 (significantly discounted)
+- Falls back to V1 when reuse distance data is unavailable
 
 ### Academic Basis
 

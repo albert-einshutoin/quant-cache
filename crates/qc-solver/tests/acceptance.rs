@@ -1,8 +1,8 @@
 /// Phase 7 Acceptance: Optimality gap over 50 synthetic cases.
 /// Target: median < 5%, p95 < 10% (n <= 1,000).
 use qc_model::scenario::{
-    CapacityConstraint, FreshnessModel, ScenarioConfig, StaleCostOverrides, StalePenaltyClass,
-    StalePenaltyConfig,
+    CapacityConstraint, FreshnessModel, ScenarioConfig, ScoringVersion, StaleCostOverrides,
+    StalePenaltyClass, StalePenaltyConfig,
 };
 use qc_simulate::synthetic::{self, SyntheticConfig};
 use qc_solver::greedy::GreedySolver;
@@ -23,6 +23,7 @@ fn optimality_gap_50_cases() {
                 cost_overrides: StaleCostOverrides::default(),
             },
         },
+        scoring_version: ScoringVersion::default(),
     };
 
     let mut gaps: Vec<f64> = Vec::with_capacity(50);

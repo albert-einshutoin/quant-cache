@@ -5,8 +5,8 @@
 /// - EconomicGreedy should be competitive with GDSF (not always better, since
 ///   static offline policy vs online adaptive has structural disadvantage)
 use qc_model::scenario::{
-    CapacityConstraint, FreshnessModel, ScenarioConfig, StaleCostOverrides, StalePenaltyClass,
-    StalePenaltyConfig,
+    CapacityConstraint, FreshnessModel, ScenarioConfig, ScoringVersion, StaleCostOverrides,
+    StalePenaltyClass, StalePenaltyConfig,
 };
 use qc_simulate::baselines::{GdsfPolicy, LruPolicy, StaticPolicy};
 use qc_simulate::comparator::Comparator;
@@ -83,6 +83,7 @@ fn economic_greedy_competitive_with_lru_on_cost_savings() {
                 cost_overrides: StaleCostOverrides::default(),
             },
         },
+        scoring_version: ScoringVersion::default(),
     };
 
     let mut econ_wins_savings = 0;
@@ -115,6 +116,7 @@ fn comparison_produces_meaningful_metrics() {
                 cost_overrides: StaleCostOverrides::default(),
             },
         },
+        scoring_version: ScoringVersion::default(),
     };
 
     let (lru_obj, gdsf_obj, econ_obj, lru_s, gdsf_s, econ_s) = run_comparison(42, &config);

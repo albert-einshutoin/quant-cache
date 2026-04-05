@@ -213,16 +213,40 @@ pub fn generate(config: &SyntheticConfig) -> Result<Vec<RequestTraceEvent>, Simu
     Ok(events)
 }
 
-/// Extract `ObjectFeatures` from a generated trace.
-/// Aggregates trace events into per-object statistics.
-/// `update_rate` and `stale_penalty_class` are estimated from trace content diversity.
+/// Extract `ObjectFeatures` from a generated trace, including reuse distance.
+/// Convenience wrapper that always computes reuse distance.
+/// For large traces where V2 scoring is not needed, use
+/// `aggregate_features_with_options(events, time_window, false)` to skip
+/// the O(n·k) reuse distance computation.
 pub fn aggregate_features(
     events: &[RequestTraceEvent],
     time_window_seconds: u64,
 ) -> Vec<qc_model::object::ObjectFeatures> {
+    aggregate_features_with_options(events, time_window_seconds, true)
+}
+
+/// Extract `ObjectFeatures` from a generated trace.
+/// When `compute_reuse` is false, reuse distance fields are left as None
+/// (suitable for V1 scoring only).
+pub fn aggregate_features_with_options(
+    events: &[RequestTraceEvent],
+    time_window_seconds: u64,
+    compute_reuse: bool,
+) -> Vec<qc_model::object::ObjectFeatures> {
     use qc_model::object::ObjectFeatures;
     use qc_model::scenario::StalePenaltyClass;
     use std::collections::{HashMap, HashSet};
+
+    // Compute reuse distances only when requested (V2 scoring)
+    let reuse_stats = if compute_reuse {
+        crate::reuse_distance::compute_reuse_distances(events)
+    } else {
+        vec![]
+    };
+    let reuse_map: HashMap<&str, &crate::reuse_distance::ReuseDistanceStats> = reuse_stats
+        .iter()
+        .map(|s| (s.cache_key.as_str(), s))
+        .collect();
 
     struct Acc {
         size_bytes: u64,
@@ -285,6 +309,9 @@ pub fn aggregate_features(
                 _ => StalePenaltyClass::Medium,
             };
 
+            // Populate reuse distance from pre-computed stats
+            let rd = reuse_map.get(cache_key.as_str());
+
             ObjectFeatures {
                 object_id: cache_key.clone(),
                 cache_key,
@@ -301,9 +328,9 @@ pub fn aggregate_features(
                 stale_penalty_class: stale_class,
                 purge_group: None,
                 origin_group: None,
-                mean_reuse_distance: None,
-                reuse_distance_p50: None,
-                reuse_distance_p95: None,
+                mean_reuse_distance: rd.map(|r| r.mean),
+                reuse_distance_p50: rd.map(|r| r.p50),
+                reuse_distance_p95: rd.map(|r| r.p95),
             }
         })
         .collect()

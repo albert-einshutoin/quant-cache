@@ -1,5 +1,6 @@
 use crate::scenario::{
-    FreshnessModel, ScenarioConfig, StaleCostOverrides, StalePenaltyClass, StalePenaltyConfig,
+    FreshnessModel, ScenarioConfig, ScoringVersion, StaleCostOverrides, StalePenaltyClass,
+    StalePenaltyConfig,
 };
 
 /// Preset profile for users who don't know their economic parameters.
@@ -23,6 +24,7 @@ impl Preset {
                         cost_overrides: StaleCostOverrides::default(),
                     },
                 },
+                scoring_version: ScoringVersion::default(),
             },
             Self::Media => ScenarioConfig {
                 capacity_bytes,
@@ -34,6 +36,7 @@ impl Preset {
                         cost_overrides: StaleCostOverrides::default(),
                     },
                 },
+                scoring_version: ScoringVersion::default(),
             },
             Self::Api => ScenarioConfig {
                 capacity_bytes,
@@ -42,6 +45,7 @@ impl Preset {
                 freshness_model: FreshnessModel::InvalidationOnUpdate {
                     invalidation_cost: 0.001,
                 },
+                scoring_version: ScoringVersion::default(),
             },
         }
     }

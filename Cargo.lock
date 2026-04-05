@@ -822,6 +822,7 @@ dependencies = [
  "qc-model",
  "qc-simulate",
  "qc-solver",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -838,6 +839,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
@@ -851,6 +853,7 @@ dependencies = [
  "qc-solver",
  "rand 0.8.5",
  "rand_distr",
+ "regex",
  "serde",
  "thiserror",
  "tracing",
@@ -867,6 +870,7 @@ dependencies = [
  "qc-simulate",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
 ]

@@ -29,12 +29,13 @@ qc-model  →  qc-solver  →  qc-simulate  →  qc-cli
 
 Scoring and solving are separated:
 - `BenefitCalculator` transforms `ObjectFeatures → ScoredObject`
+- Two scoring versions: V1 (frequency-based) and V2 (reuse-distance-aware, `--scoring v2`)
 - `Solver` trait receives `ScoredObject[]` + `CapacityConstraint`
 - Solver never sees economic parameters directly
 
 ## Key Files
 
-- `crates/qc-solver/src/score.rs` — economic scoring formula (the core value proposition)
+- `crates/qc-solver/src/score.rs` — economic scoring: V1 (frequency) + V2 (reuse distance)
 - `crates/qc-solver/src/greedy.rs` — greedy knapsack solver
 - `crates/qc-solver/src/qubo.rs` — quadratic SA solver (co-access interactions)
 - `crates/qc-solver/src/calibrate.rs` — coefficient calibration (coordinate descent)

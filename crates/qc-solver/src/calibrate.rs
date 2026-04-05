@@ -1,6 +1,7 @@
 use qc_model::object::ObjectFeatures;
 use qc_model::scenario::{
-    FreshnessModel, ScenarioConfig, StaleCostOverrides, StalePenaltyClass, StalePenaltyConfig,
+    FreshnessModel, ScenarioConfig, ScoringVersion, StaleCostOverrides, StalePenaltyClass,
+    StalePenaltyConfig,
 };
 use qc_model::trace::RequestTraceEvent;
 
@@ -169,5 +170,6 @@ fn make_config(
                 cost_overrides: StaleCostOverrides::default(),
             },
         },
+        scoring_version: ScoringVersion::default(),
     }
 }

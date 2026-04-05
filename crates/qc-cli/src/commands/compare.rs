@@ -64,10 +64,14 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         co_access_window_ms: 0,
         co_access_top_k: 0,
         ilp: false,
+        scoring: None,
     };
     let config = super::optimize::load_config(&opt_args)?;
 
-    let features = synthetic::aggregate_features(&events, args.time_window);
+    let compute_reuse =
+        config.scoring_version == qc_model::scenario::ScoringVersion::V2ReuseDistance;
+    let features =
+        synthetic::aggregate_features_with_options(&events, args.time_window, compute_reuse);
     let scored = BenefitCalculator::score_all(&features, &config)?;
     let constraint = qc_model::scenario::CapacityConstraint {
         capacity_bytes: config.capacity_bytes,

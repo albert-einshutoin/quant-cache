@@ -50,16 +50,24 @@ pub struct OptimizeArgs {
     /// Use ILP solver instead of greedy (shorthand for --solver ilp)
     #[arg(long, default_value_t = false)]
     pub ilp: bool,
+
+    /// Scoring version: v1 (frequency-based) or v2 (reuse-distance-aware).
+    /// Overrides scoring_version in config file when specified.
+    #[arg(long)]
+    pub scoring: Option<String>,
 }
 
 pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
     let events = read_trace_csv(&args.input)?;
     tracing::info!(events = events.len(), "loaded trace");
 
-    let features = synthetic::aggregate_features(&events, args.time_window);
+    let config = load_config(args)?;
+    let compute_reuse =
+        config.scoring_version == qc_model::scenario::ScoringVersion::V2ReuseDistance;
+    let features =
+        synthetic::aggregate_features_with_options(&events, args.time_window, compute_reuse);
     tracing::info!(objects = features.len(), "aggregated object features");
 
-    let config = load_config(args)?;
     let scored = BenefitCalculator::score_all(&features, &config)?;
 
     let solver_name = if args.ilp {
@@ -194,21 +202,38 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
 }
 
 pub(crate) fn load_config(args: &OptimizeArgs) -> anyhow::Result<ScenarioConfig> {
-    if let Some(config_path) = &args.config {
+    use qc_model::scenario::ScoringVersion;
+
+    let scoring_override = match &args.scoring {
+        Some(s) => Some(match s.as_str() {
+            "v1" => ScoringVersion::V1Frequency,
+            "v2" => ScoringVersion::V2ReuseDistance,
+            other => anyhow::bail!("unknown scoring version: {other}. Use: v1, v2"),
+        }),
+        None => None,
+    };
+
+    let mut config = if let Some(config_path) = &args.config {
         let toml_str = std::fs::read_to_string(config_path)?;
-        let config: ScenarioConfig = toml::from_str(&toml_str)?;
-        return Ok(config);
+        toml::from_str(&toml_str)?
+    } else {
+        match &args.preset {
+            Some(p) => match p.as_str() {
+                "ecommerce" => Preset::Ecommerce.to_config(args.capacity),
+                "media" => Preset::Media.to_config(args.capacity),
+                "api" => Preset::Api.to_config(args.capacity),
+                other => anyhow::bail!("unknown preset: {other}. Use: ecommerce, media, api"),
+            },
+            None => Preset::Ecommerce.to_config(args.capacity),
+        }
+    };
+
+    // CLI --scoring flag overrides config file only when explicitly specified
+    if let Some(sv) = scoring_override {
+        config.scoring_version = sv;
     }
 
-    Ok(match &args.preset {
-        Some(p) => match p.as_str() {
-            "ecommerce" => Preset::Ecommerce.to_config(args.capacity),
-            "media" => Preset::Media.to_config(args.capacity),
-            "api" => Preset::Api.to_config(args.capacity),
-            other => anyhow::bail!("unknown preset: {other}. Use: ecommerce, media, api"),
-        },
-        None => Preset::Ecommerce.to_config(args.capacity),
-    })
+    Ok(config)
 }
 
 pub(crate) fn read_trace_csv(

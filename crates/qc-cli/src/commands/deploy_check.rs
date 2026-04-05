@@ -46,8 +46,6 @@ pub fn run(args: &DeployCheckArgs) -> anyhow::Result<()> {
     let events = super::optimize::read_trace_csv(&args.input)?;
     tracing::info!(events = events.len(), "loaded trace");
 
-    let features = synthetic::aggregate_features(&events, args.time_window);
-
     // Load scenario config
     let opt_args = super::optimize::OptimizeArgs {
         input: args.input.clone(),
@@ -60,8 +58,14 @@ pub fn run(args: &DeployCheckArgs) -> anyhow::Result<()> {
         co_access_window_ms: 0,
         co_access_top_k: 0,
         ilp: false,
+        scoring: None,
     };
     let scenario_config = super::optimize::load_config(&opt_args)?;
+
+    let compute_reuse =
+        scenario_config.scoring_version == qc_model::scenario::ScoringVersion::V2ReuseDistance;
+    let features =
+        synthetic::aggregate_features_with_options(&events, args.time_window, compute_reuse);
     let scored = BenefitCalculator::score_all(&features, &scenario_config)?;
 
     // Build econ config

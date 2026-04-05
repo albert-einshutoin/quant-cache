@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+/// Scoring version selection.
+/// Serde aliases allow both short ("v1"/"v2") and full names in config files.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScoringVersion {
+    /// V1: frequency-based demand estimation (request_count).
+    #[default]
+    #[serde(rename = "v1", alias = "v1_frequency")]
+    V1Frequency,
+    /// V2: reuse-distance-aware hit probability estimation.
+    #[serde(rename = "v2", alias = "v2_reuse_distance")]
+    V2ReuseDistance,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioConfig {
     pub capacity_bytes: u64,
@@ -7,6 +20,9 @@ pub struct ScenarioConfig {
     /// Latency economic value ($/ms).
     pub latency_value_per_ms: f64,
     pub freshness_model: FreshnessModel,
+    /// Scoring model version. Defaults to V1 (frequency-based).
+    #[serde(default)]
+    pub scoring_version: ScoringVersion,
 }
 
 /// Freshness model selection.

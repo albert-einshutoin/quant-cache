@@ -3,8 +3,8 @@ use qc_model::metrics::MetricsSummary;
 use qc_model::object::{ObjectFeatures, ScoreBreakdown, ScoredObject};
 use qc_model::policy::PolicyDecision;
 use qc_model::scenario::{
-    CapacityConstraint, FreshnessModel, ScenarioConfig, StaleCostOverrides, StalePenaltyClass,
-    StalePenaltyConfig,
+    CapacityConstraint, FreshnessModel, ScenarioConfig, ScoringVersion, StaleCostOverrides,
+    StalePenaltyClass, StalePenaltyConfig,
 };
 use qc_model::trace::{CacheStatus, RequestTraceEvent};
 
@@ -161,6 +161,7 @@ fn scenario_ttl_only_roundtrip() {
                 cost_overrides: StaleCostOverrides::default(),
             },
         },
+        scoring_version: ScoringVersion::default(),
     };
     roundtrip(&config);
 }
@@ -174,6 +175,7 @@ fn scenario_invalidation_roundtrip() {
         freshness_model: FreshnessModel::InvalidationOnUpdate {
             invalidation_cost: 0.001,
         },
+        scoring_version: ScoringVersion::default(),
     };
     roundtrip(&config);
 }
