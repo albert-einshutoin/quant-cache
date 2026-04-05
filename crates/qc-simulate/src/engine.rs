@@ -95,17 +95,17 @@ pub struct TraceReplayEngine;
 
 impl TraceReplayEngine {
     /// Replay with default (legacy) economic config — origin cost savings only.
-    pub fn replay(
+    pub fn replay<P: CachePolicy + ?Sized>(
         events: &[RequestTraceEvent],
-        policy: &mut dyn CachePolicy,
+        policy: &mut P,
     ) -> Result<MetricsSummary, SimulateError> {
         Self::replay_with_econ(events, policy, &ReplayEconConfig::default())
     }
 
     /// Replay with full economic evaluation matching solver objective.
-    pub fn replay_with_econ(
+    pub fn replay_with_econ<P: CachePolicy + ?Sized>(
         events: &[RequestTraceEvent],
-        policy: &mut dyn CachePolicy,
+        policy: &mut P,
         econ: &ReplayEconConfig,
     ) -> Result<MetricsSummary, SimulateError> {
         if events.is_empty() {

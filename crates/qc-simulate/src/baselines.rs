@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use chrono::{DateTime, Utc};
 use qc_model::trace::RequestTraceEvent;
@@ -106,17 +106,22 @@ impl CachePolicy for StaticPolicy {
 
 struct LruEntry {
     size: u64,
+    generation: u64,
     insert_time: DateTime<Utc>,
     version: Option<String>,
 }
 
 /// Least Recently Used eviction policy with stale detection.
+///
+/// Uses a generation counter + BTreeMap for O(1) promote and O(log n) eviction.
 pub struct LruPolicy {
     capacity_bytes: u64,
     used_bytes: u64,
     ttl_seconds: u64,
-    order: VecDeque<String>,
+    generation: u64,
     entries: HashMap<String, LruEntry>,
+    /// generation → cache_key for O(log n) min-generation eviction.
+    order: BTreeMap<u64, String>,
 }
 
 impl LruPolicy {
@@ -125,8 +130,9 @@ impl LruPolicy {
             capacity_bytes,
             used_bytes: 0,
             ttl_seconds: 3600,
-            order: VecDeque::new(),
+            generation: 0,
             entries: HashMap::new(),
+            order: BTreeMap::new(),
         }
     }
 
@@ -135,17 +141,20 @@ impl LruPolicy {
         self
     }
 
-    fn promote(&mut self, key: &str) {
-        if let Some(pos) = self.order.iter().position(|k| k == key) {
-            self.order.remove(pos);
-            self.order.push_back(key.to_string());
+    fn touch(&mut self, key: &str) {
+        if let Some(entry) = self.entries.get_mut(key) {
+            self.order.remove(&entry.generation);
+            self.generation += 1;
+            entry.generation = self.generation;
+            self.order.insert(self.generation, key.to_string());
         }
     }
 
     fn evict_until_fits(&mut self, needed: u64) {
         while self.used_bytes + needed > self.capacity_bytes {
-            if let Some(victim) = self.order.pop_front() {
-                if let Some(entry) = self.entries.remove(&victim) {
+            if let Some((&gen, _)) = self.order.iter().next() {
+                let key = self.order.remove(&gen).unwrap();
+                if let Some(entry) = self.entries.remove(&key) {
                     self.used_bytes -= entry.size;
                 }
             } else {
@@ -160,15 +169,17 @@ impl LruPolicy {
             return;
         }
         self.evict_until_fits(size);
+        self.generation += 1;
+        self.order.insert(self.generation, event.cache_key.clone());
         self.entries.insert(
             event.cache_key.clone(),
             LruEntry {
                 size,
+                generation: self.generation,
                 insert_time: event.timestamp,
                 version: event.version_or_etag.clone(),
             },
         );
-        self.order.push_back(event.cache_key.clone());
         self.used_bytes += size;
     }
 }
@@ -183,17 +194,14 @@ impl CachePolicy for LruPolicy {
             return CacheOutcome::Bypass;
         }
 
-        if self.entries.contains_key(&event.cache_key) {
-            let stale = {
-                let entry = self.entries.get(&event.cache_key).unwrap();
-                check_stale(
-                    entry.insert_time,
-                    entry.version.as_deref(),
-                    event,
-                    self.ttl_seconds,
-                )
-            };
-            self.promote(&event.cache_key);
+        if let Some(entry) = self.entries.get(&event.cache_key) {
+            let stale = check_stale(
+                entry.insert_time,
+                entry.version.as_deref(),
+                event,
+                self.ttl_seconds,
+            );
+            self.touch(&event.cache_key);
 
             if stale {
                 if let Some(entry) = self.entries.get_mut(&event.cache_key) {
@@ -483,20 +491,31 @@ impl CachePolicy for BeladyPolicy {
 
 // ── SIEVE (NSDI 2024 Best Paper) ────────────────────────────────────
 
+/// SIEVE entry stored in the circular queue.
+struct SieveEntry {
+    key: String,
+    size: u64,
+    visited: bool,
+    alive: bool,
+}
+
 /// SIEVE eviction policy: FIFO queue + visited bit + hand pointer.
 ///
 /// On hit: set visited=1 (lazy promotion, no queue reorder).
 /// On eviction: hand scans for first unvisited object, evicts it.
+/// Uses tombstone (alive=false) to avoid O(n) VecDeque remove + index rebuild.
 /// Ref: Zhang et al., "SIEVE is Simpler than LRU", NSDI 2024.
 pub struct SievePolicy {
     capacity_bytes: u64,
     used_bytes: u64,
-    /// Objects in insertion order. Each entry: (cache_key, size, visited).
-    queue: VecDeque<(String, u64, bool)>,
+    /// Circular queue with tombstones.
+    queue: VecDeque<SieveEntry>,
     /// Fast lookup: cache_key → index in queue.
     pub(crate) index: HashMap<String, usize>,
     /// Hand position for eviction scan.
     hand: usize,
+    /// Count of tombstoned (dead) entries for periodic compaction.
+    tombstones: usize,
 }
 
 impl SievePolicy {
@@ -507,54 +526,84 @@ impl SievePolicy {
             queue: VecDeque::new(),
             index: HashMap::new(),
             hand: 0,
+            tombstones: 0,
         }
+    }
+
+    fn evict_one(&mut self) -> bool {
+        let len = self.queue.len();
+        if len == 0 {
+            return false;
+        }
+        let live_count = len - self.tombstones;
+        if live_count == 0 {
+            return false;
+        }
+        let mut scanned = 0;
+        while scanned < len {
+            let pos = self.hand % len;
+            self.hand = (self.hand + 1) % len;
+            let entry = &mut self.queue[pos];
+            if !entry.alive {
+                scanned += 1;
+                continue;
+            }
+            if entry.visited {
+                entry.visited = false;
+                scanned += 1;
+                continue;
+            }
+            // Evict: tombstone this entry
+            let size = entry.size;
+            entry.alive = false;
+            self.index.remove(&entry.key);
+            self.used_bytes -= size;
+            self.tombstones += 1;
+            return true;
+        }
+        // All live entries were visited — evict current hand entry
+        let pos = self.hand % len;
+        // Find next live entry from hand
+        for i in 0..len {
+            let p = (pos + i) % len;
+            let entry = &mut self.queue[p];
+            if entry.alive {
+                let size = entry.size;
+                entry.alive = false;
+                self.index.remove(&entry.key);
+                self.used_bytes -= size;
+                self.tombstones += 1;
+                self.hand = (p + 1) % len;
+                return true;
+            }
+        }
+        false
     }
 
     fn evict_until_fits(&mut self, needed: u64) {
-        while self.used_bytes + needed > self.capacity_bytes && !self.queue.is_empty() {
-            // Scan from hand position for an unvisited object
-            let len = self.queue.len();
-            let mut scanned = 0;
-            while scanned < len {
-                let pos = self.hand % len;
-                if !self.queue[pos].2 {
-                    // Evict this unvisited object
-                    let (key, size, _) = self.queue.remove(pos).unwrap();
-                    self.index.remove(&key);
-                    self.used_bytes -= size;
-                    // Rebuild indices after removal
-                    self.rebuild_index();
-                    if self.hand > 0 && pos < self.hand {
-                        self.hand -= 1;
-                    }
-                    self.hand %= self.queue.len().max(1);
-                    break;
-                } else {
-                    // Reset visited bit and advance hand
-                    self.queue[pos].2 = false;
-                    self.hand = (self.hand + 1) % len;
-                }
-                scanned += 1;
-            }
-            if scanned == len {
-                // All visited — evict at hand (after resetting all)
-                let pos = self.hand % self.queue.len().max(1);
-                if let Some((key, size, _)) = self.queue.remove(pos) {
-                    self.index.remove(&key);
-                    self.used_bytes -= size;
-                    self.rebuild_index();
-                    self.hand = 0;
-                } else {
-                    break;
-                }
+        while self.used_bytes + needed > self.capacity_bytes {
+            if !self.evict_one() {
+                break;
             }
         }
+        self.maybe_compact();
     }
 
-    fn rebuild_index(&mut self) {
-        self.index.clear();
-        for (i, (key, _, _)) in self.queue.iter().enumerate() {
-            self.index.insert(key.clone(), i);
+    /// Compact tombstones when they exceed half the queue.
+    fn maybe_compact(&mut self) {
+        if self.tombstones > 0 && self.tombstones * 2 > self.queue.len() {
+            let mut new_queue = VecDeque::with_capacity(self.queue.len() - self.tombstones);
+            self.index.clear();
+            for entry in self.queue.drain(..) {
+                if entry.alive {
+                    let idx = new_queue.len();
+                    self.index.insert(entry.key.clone(), idx);
+                    new_queue.push_back(entry);
+                }
+            }
+            self.queue = new_queue;
+            self.tombstones = 0;
+            self.hand = self.hand.min(self.queue.len().saturating_sub(1));
         }
     }
 }
@@ -571,7 +620,7 @@ impl CachePolicy for SievePolicy {
 
         if let Some(&idx) = self.index.get(&event.cache_key) {
             // Hit: set visited = true (lazy promotion)
-            self.queue[idx].2 = true;
+            self.queue[idx].visited = true;
             CacheOutcome::Hit
         } else {
             // Miss: insert at tail
@@ -581,7 +630,12 @@ impl CachePolicy for SievePolicy {
             }
             self.evict_until_fits(size);
             let idx = self.queue.len();
-            self.queue.push_back((event.cache_key.clone(), size, false));
+            self.queue.push_back(SieveEntry {
+                key: event.cache_key.clone(),
+                size,
+                visited: false,
+                alive: true,
+            });
             self.index.insert(event.cache_key.clone(), idx);
             self.used_bytes += size;
             CacheOutcome::Miss
@@ -591,27 +645,37 @@ impl CachePolicy for SievePolicy {
 
 // ── S3-FIFO (SOSP 2023) ────────────────────────────────────────────
 
+/// Entry metadata for S3-FIFO queues.
+pub(crate) struct S3FifoEntry {
+    size: u64,
+    freq: u8,
+}
+
 /// S3-FIFO: three static FIFO queues with quick demotion.
 ///
 /// Small (10%): probationary. Objects enter here.
 /// Main (90%): promoted from Small on hit.
 /// Ghost: metadata-only for recently evicted from Small.
+///
+/// Data (size, freq) lives in HashMaps for O(1) lookup/update.
+/// VecDeque<String> tracks FIFO order only.
 /// Ref: Yang et al., "FIFO Queues are All You Need", SOSP 2023.
 pub struct S3FifoPolicy {
     small_capacity: u64,
     main_capacity: u64,
     small_used: u64,
     main_used: u64,
-    /// Small queue: (cache_key, size, freq_counter)
-    small: VecDeque<(String, u64, u8)>,
-    /// Main queue: (cache_key, size, freq_counter)
-    main: VecDeque<(String, u64, u8)>,
+    /// Small FIFO order
+    small_order: VecDeque<String>,
+    /// Main FIFO order
+    main_order: VecDeque<String>,
+    /// Small entry data: cache_key → (size, freq)
+    pub(crate) in_small: HashMap<String, S3FifoEntry>,
+    /// Main entry data: cache_key → (size, freq)
+    pub(crate) in_main: HashMap<String, S3FifoEntry>,
     /// Ghost set: recently evicted from Small (metadata only)
     ghost: std::collections::HashSet<String>,
     ghost_max: usize,
-    /// Fast lookup for cache membership
-    pub(crate) in_small: HashMap<String, usize>,
-    pub(crate) in_main: HashMap<String, usize>,
 }
 
 impl S3FifoPolicy {
@@ -623,58 +687,70 @@ impl S3FifoPolicy {
             main_capacity,
             small_used: 0,
             main_used: 0,
-            small: VecDeque::new(),
-            main: VecDeque::new(),
-            ghost: std::collections::HashSet::new(),
-            ghost_max: 1000,
+            small_order: VecDeque::new(),
+            main_order: VecDeque::new(),
             in_small: HashMap::new(),
             in_main: HashMap::new(),
+            ghost: std::collections::HashSet::new(),
+            ghost_max: 1000,
         }
     }
 
     fn evict_small(&mut self) {
-        if let Some((key, size, freq)) = self.small.pop_front() {
-            self.in_small.remove(&key);
-            self.small_used -= size;
-
-            if freq > 0 {
-                // Promote to main
-                self.insert_main(&key, size);
-            } else {
-                // Quick demotion: discard (one-hit wonder)
-                self.ghost.insert(key);
-                if self.ghost.len() > self.ghost_max {
-                    if let Some(old) = self.ghost.iter().next().cloned() {
-                        self.ghost.remove(&old);
+        while let Some(key) = self.small_order.pop_front() {
+            if let Some(entry) = self.in_small.remove(&key) {
+                self.small_used -= entry.size;
+                if entry.freq > 0 {
+                    // Promote to main
+                    self.insert_main(&key, entry.size);
+                } else {
+                    // Quick demotion: discard (one-hit wonder)
+                    self.ghost.insert(key);
+                    if self.ghost.len() > self.ghost_max {
+                        if let Some(old) = self.ghost.iter().next().cloned() {
+                            self.ghost.remove(&old);
+                        }
                     }
+                }
+                return;
+            }
+            // Stale order entry (already evicted/promoted), skip
+        }
+    }
+
+    /// Evict one entry from main queue. Returns true if bytes were freed.
+    fn evict_main(&mut self) -> bool {
+        while let Some(key) = self.main_order.pop_front() {
+            if let Some(entry) = self.in_main.remove(&key) {
+                self.main_used -= entry.size;
+                if entry.freq > 0 {
+                    // Re-insert with decremented freq (second chance)
+                    self.main_order.push_back(key.clone());
+                    self.in_main.insert(
+                        key,
+                        S3FifoEntry {
+                            size: entry.size,
+                            freq: entry.freq - 1,
+                        },
+                    );
+                    self.main_used += entry.size;
+                } else {
+                    return true; // Evicted
                 }
             }
         }
-    }
-
-    fn evict_main(&mut self) {
-        while let Some((key, size, freq)) = self.main.pop_front() {
-            self.in_main.remove(&key);
-            self.main_used -= size;
-            if freq > 0 {
-                // Re-insert with decremented freq
-                self.main.push_back((key.clone(), size, freq - 1));
-                let idx = self.main.len() - 1;
-                self.in_main.insert(key, idx);
-                self.main_used += size;
-            } else {
-                break;
-            }
-        }
+        false
     }
 
     fn insert_main(&mut self, key: &str, size: u64) {
-        while self.main_used + size > self.main_capacity && !self.main.is_empty() {
-            self.evict_main();
+        while self.main_used + size > self.main_capacity && !self.in_main.is_empty() {
+            if !self.evict_main() {
+                break;
+            }
         }
-        let idx = self.main.len();
-        self.main.push_back((key.to_string(), size, 0));
-        self.in_main.insert(key.to_string(), idx);
+        self.main_order.push_back(key.to_string());
+        self.in_main
+            .insert(key.to_string(), S3FifoEntry { size, freq: 0 });
         self.main_used += size;
     }
 }
@@ -689,19 +765,15 @@ impl CachePolicy for S3FifoPolicy {
             return CacheOutcome::Bypass;
         }
 
-        // Check if in small queue
-        if let Some(&idx) = self.in_small.get(&event.cache_key) {
-            if idx < self.small.len() {
-                self.small[idx].2 = self.small[idx].2.saturating_add(1).min(3);
-            }
+        // Check if in small queue — O(1) lookup + freq update
+        if let Some(entry) = self.in_small.get_mut(&event.cache_key) {
+            entry.freq = entry.freq.saturating_add(1).min(3);
             return CacheOutcome::Hit;
         }
 
-        // Check if in main queue
-        if let Some(&idx) = self.in_main.get(&event.cache_key) {
-            if idx < self.main.len() {
-                self.main[idx].2 = self.main[idx].2.saturating_add(1).min(3);
-            }
+        // Check if in main queue — O(1) lookup + freq update
+        if let Some(entry) = self.in_main.get_mut(&event.cache_key) {
+            entry.freq = entry.freq.saturating_add(1).min(3);
             return CacheOutcome::Hit;
         }
 
@@ -711,11 +783,10 @@ impl CachePolicy for S3FifoPolicy {
             return CacheOutcome::Miss;
         }
 
-        while self.small_used + size > self.small_capacity && !self.small.is_empty() {
+        while self.small_used + size > self.small_capacity && !self.in_small.is_empty() {
             self.evict_small();
         }
 
-        let idx = self.small.len();
         let initial_freq = if self.ghost.contains(&event.cache_key) {
             self.ghost.remove(&event.cache_key);
             1 // Ghost hit → start with freq=1 (will be promoted on next eviction)
@@ -723,9 +794,14 @@ impl CachePolicy for S3FifoPolicy {
             0
         };
 
-        self.small
-            .push_back((event.cache_key.clone(), size, initial_freq));
-        self.in_small.insert(event.cache_key.clone(), idx);
+        self.small_order.push_back(event.cache_key.clone());
+        self.in_small.insert(
+            event.cache_key.clone(),
+            S3FifoEntry {
+                size,
+                freq: initial_freq,
+            },
+        );
         self.small_used += size;
 
         CacheOutcome::Miss
