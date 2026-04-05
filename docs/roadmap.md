@@ -288,11 +288,17 @@ they inform which policy configurations handle correlated access patterns.
 - Cloudflare API validation / direct deployment
 - Validate generated config against Cloudflare API schema
 
+### Supported Targets
+
+- Cloudflare (Rulesets API + Workers)
+- CloudFront (CacheBehaviors + CloudFront Functions)
+- Fastly (VCL snippets + Edge Dictionary)
+- Akamai (Property Manager rule tree + EdgeWorkers)
+
 ### Future Targets
 
-- Fastly VCL / Compute
-- CloudFront Functions / Lambda@Edge
-- Akamai Property Manager / EdgeWorkers
+- Lambda@Edge (CloudFront advanced)
+- Varnish (open-source VCL)
 
 ---
 

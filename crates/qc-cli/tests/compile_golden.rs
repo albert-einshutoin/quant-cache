@@ -352,6 +352,130 @@ fn validate_cloudflare_fails_unpopulated_scores() {
 }
 
 #[test]
+fn akamai_minimal_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{"backend":"sieve","capacity_bytes":100000}"#,
+    );
+    let out = dir.path().join("ak.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "akamai", "-o"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+
+    assert_eq!(config["_target"], "akamai");
+    assert_eq!(config["rule_tree"]["rules"]["name"], "default");
+    assert!(config["rule_tree"]["rules"]["children"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(config["edgeworker_bundle"].is_null());
+}
+
+#[test]
+fn akamai_full_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{
+        "backend": "sieve",
+        "capacity_bytes": 50000000,
+        "admission_rule": {"type": "score_threshold", "threshold": 1.0},
+        "bypass_rule": {"type": "freshness_risk", "threshold": 0.3},
+        "ttl_class_rules": [
+            {"content_type_pattern": "image/", "ttl_seconds": 86400}
+        ],
+        "cache_key_rules": [
+            {"pattern":"[?&]utm_[^&]*","replacement":""}
+        ],
+        "prewarm_set": ["/hero.jpg"]
+    }"#,
+    );
+    let out = dir.path().join("ak.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "akamai", "-o"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+
+    let children = config["rule_tree"]["rules"]["children"].as_array().unwrap();
+
+    // cache key normalization + bypass + TTL + admission gate = 4 children
+    assert_eq!(
+        children.len(),
+        4,
+        "expected 4 children, got {}",
+        children.len()
+    );
+
+    // Cache key normalization
+    assert!(children[0]["behaviors"][0]["name"] == "cacheKeyQueryParams");
+
+    // Bypass rule (freshness risk → NO_STORE)
+    assert!(children[1]["behaviors"][0]["options"]["behavior"] == "NO_STORE");
+
+    // TTL rule with Akamai duration format
+    assert!(children[2]["behaviors"][0]["options"]["ttl"] == "1d");
+
+    // Admission gate EdgeWorker
+    assert!(children[3]["behaviors"][0]["name"] == "edgeWorker");
+
+    // EdgeWorker bundle present
+    assert!(config["edgeworker_bundle"].is_string());
+
+    // Prewarm
+    assert_eq!(config["prewarm_urls"][0], "/hero.jpg");
+}
+
+#[test]
+fn validate_akamai_passes() {
+    let dir = tempfile::tempdir().unwrap();
+    let ir = write_ir(
+        dir.path(),
+        "ir.json",
+        r#"{"backend":"sieve","capacity_bytes":100000,"ttl_class_rules":[{"content_type_pattern":"image/","ttl_seconds":3600}],"prewarm_set":["/hero.jpg"]}"#,
+    );
+    let out = dir.path().join("ak.json");
+
+    let result = Command::new(qc())
+        .args(["compile", "-p"])
+        .arg(&ir)
+        .args(["-t", "akamai", "-o"])
+        .arg(&out)
+        .args(["--validate"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "valid Akamai config should pass validation"
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("PASS"), "should report PASS");
+}
+
+#[test]
 fn validate_cloudfront_passes() {
     let dir = tempfile::tempdir().unwrap();
     let ir = write_ir(

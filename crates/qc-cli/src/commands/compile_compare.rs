@@ -19,8 +19,13 @@ pub struct CompileCompareArgs {
 }
 
 pub fn run(args: &CompileCompareArgs) -> anyhow::Result<()> {
-    let targets = ["cloudflare", "cloudfront", "fastly"];
-    let extensions = ["cloudflare.json", "cloudfront.json", "fastly.json"];
+    let targets = ["cloudflare", "cloudfront", "fastly", "akamai"];
+    let extensions = [
+        "cloudflare.json",
+        "cloudfront.json",
+        "fastly.json",
+        "akamai.json",
+    ];
 
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
