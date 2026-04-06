@@ -35,8 +35,14 @@ impl ProviderLogParser for CloudFrontParser {
 
         let mut events = Vec::new();
 
+        const MAX_LINE_BYTES: usize = 64 * 1024;
+
         for line in reader.lines() {
             let line = line?;
+            if line.len() > MAX_LINE_BYTES {
+                tracing::warn!("skipping oversized line ({} bytes)", line.len());
+                continue;
+            }
             if line.starts_with('#') || line.is_empty() {
                 continue;
             }
@@ -89,7 +95,14 @@ fn parse_cloudfront_line(
     let status_code: u16 = fields[8].parse().unwrap_or(0);
     let uri_query = fields[11];
     let result_type = fields[13];
-    let time_taken: f64 = fields[18].parse().unwrap_or(0.0);
+    let time_taken: f64 = {
+        let raw: f64 = fields[18].parse().unwrap_or(0.0);
+        if raw.is_finite() && (0.0..=3600.0).contains(&raw) {
+            raw
+        } else {
+            0.0
+        }
+    };
     let content_type = if fields.len() > 29 && fields[29] != "-" {
         Some(fields[29].to_string())
     } else {

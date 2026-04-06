@@ -304,7 +304,7 @@ pub(crate) fn load_config(args: &OptimizeArgs) -> anyhow::Result<ScenarioConfig>
 pub(crate) fn read_trace_csv(
     path: &std::path::Path,
 ) -> anyhow::Result<Vec<qc_model::trace::RequestTraceEvent>> {
-    let mut rdr = csv::ReaderBuilder::new().flexible(true).from_path(path)?;
+    let mut rdr = csv::ReaderBuilder::new().from_path(path)?;
     let mut events = Vec::new();
     for result in rdr.deserialize() {
         let event: qc_model::trace::RequestTraceEvent = result?;
