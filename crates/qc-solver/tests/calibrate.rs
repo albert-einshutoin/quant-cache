@@ -87,17 +87,22 @@ fn default_eval_returns_zero_for_zero_capacity() {
 }
 
 #[test]
-fn calibrate_improves_or_maintains_score() {
+fn calibrate_improves_or_maintains_baseline() {
     let features = make_features(20);
     let events = make_events(20, 200);
     let config = base_config(10_000); // fits ~10 objects
+
+    // Compute baseline score with initial config
+    let baseline = default_eval(&config, &features, &events, 10_000).unwrap();
 
     // Use same data for train/val (simplified test)
     let result = calibrate(&features, &events, &features, &events, &config, 2).unwrap();
 
     assert!(
-        result.best_score >= 0.0,
-        "calibrated score should be non-negative"
+        result.best_score >= baseline - 1e-9,
+        "calibrated score {} should be >= baseline {}",
+        result.best_score,
+        baseline
     );
     assert!(result.iterations > 0, "should have run iterations");
     assert!(

@@ -579,7 +579,7 @@ fn aggregate_features_without_reuse_leaves_none() {
 // ── NaN / Inf / zero boundary tests ────────────────────────────────
 
 #[test]
-fn nan_origin_cost_clamped_to_zero_benefit() {
+fn nan_origin_cost_clamped_to_finite() {
     let mut f = make_object("nan-cost", 1000, 100, true);
     f.avg_origin_cost = f64::NAN;
     let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
@@ -588,10 +588,14 @@ fn nan_origin_cost_clamped_to_zero_benefit() {
         "NaN input should produce finite net_benefit, got {}",
         scored.net_benefit
     );
+    assert_eq!(
+        scored.net_benefit, 0.0,
+        "NaN input should be clamped to 0.0"
+    );
 }
 
 #[test]
-fn inf_latency_clamped_to_zero_benefit() {
+fn inf_latency_clamped_to_finite() {
     let mut f = make_object("inf-lat", 1000, 100, true);
     f.avg_latency_saving_ms = f64::INFINITY;
     let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
@@ -599,6 +603,10 @@ fn inf_latency_clamped_to_zero_benefit() {
         scored.net_benefit.is_finite(),
         "Inf latency should produce finite net_benefit, got {}",
         scored.net_benefit
+    );
+    assert_eq!(
+        scored.net_benefit, 0.0,
+        "Inf input should be clamped to 0.0"
     );
 }
 

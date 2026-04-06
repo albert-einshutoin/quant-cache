@@ -273,8 +273,10 @@ impl GdsfPolicy {
     }
 
     fn priority_bits(p: f64) -> u64 {
+        // Clamp NaN/Inf to 0.0 to prevent BTreeMap corruption
+        let p = if p.is_finite() { p } else { 0.0 };
         let bits = p.to_bits();
-        // Flip so that BTreeMap ordering matches f64 ordering for non-NaN values
+        // Flip so that BTreeMap ordering matches f64 ordering
         if bits & (1u64 << 63) != 0 {
             !bits
         } else {
@@ -292,7 +294,9 @@ impl GdsfPolicy {
             if let Some((&pkey, _)) = self.priority_index.iter().next() {
                 let key = self.priority_index.remove(&pkey).unwrap();
                 if let Some(entry) = self.entries.remove(&key) {
-                    self.inflation = entry.priority;
+                    if entry.priority.is_finite() {
+                        self.inflation = entry.priority;
+                    }
                     self.used_bytes -= entry.size;
                 }
             } else {
