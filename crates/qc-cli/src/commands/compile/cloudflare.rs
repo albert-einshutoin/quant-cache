@@ -71,12 +71,18 @@ pub(super) fn compile_cloudflare(
     // 4. Worker script for admission gate
     let worker = match &ir.admission_rule {
         AdmissionRule::Always => None,
-        AdmissionRule::ScoreThreshold { threshold } => {
-            Some(gen_cf_worker(*threshold, "score", score_map))
-        }
-        AdmissionRule::ScoreDensityThreshold { threshold } => {
-            Some(gen_cf_worker(*threshold, "density", score_map))
-        }
+        AdmissionRule::ScoreThreshold { threshold } => Some(gen_cf_worker(
+            *threshold,
+            "score",
+            score_map,
+            cache_key_config.as_ref(),
+        )),
+        AdmissionRule::ScoreDensityThreshold { threshold } => Some(gen_cf_worker(
+            *threshold,
+            "density",
+            score_map,
+            cache_key_config.as_ref(),
+        )),
     };
 
     // Assemble Cloudflare Rulesets API payload
@@ -166,6 +172,7 @@ pub(super) fn gen_cf_worker(
     threshold: f64,
     mode: &str,
     score_map: Option<&HashMap<String, f64>>,
+    cache_key_config: Option<&serde_json::Value>,
 ) -> String {
     let scores_js = if let Some(map) = score_map {
         let safe_map: HashMap<&str, f64> = map
@@ -178,16 +185,51 @@ pub(super) fn gen_cf_worker(
         "{\n  // Run: qc compile --scores <policy.json> to populate\n}".to_string()
     };
 
+    let strip_params = cache_key_config
+        .and_then(|cfg| cfg["query_string_strip"].as_array())
+        .map(|params| {
+            params
+                .iter()
+                .filter_map(|p| p.as_str())
+                .map(|p| format!("'{p}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+
     format!(
         r#"// quant-cache admission gate Worker
 // Mode: {mode}, threshold: {threshold}
 
 const SCORES = {scores_js};
+const STRIP_PARAMS = [{strip_params}];
+
+function shouldStripParam(name) {{
+  for (let i = 0; i < STRIP_PARAMS.length; i++) {{
+    const pattern = STRIP_PARAMS[i];
+    if (pattern.endsWith('*')) {{
+      if (name.startsWith(pattern.slice(0, -1))) return true;
+    }} else if (name === pattern) {{
+      return true;
+    }}
+  }}
+  return false;
+}}
+
+function normalizedKey(url) {{
+  const params = [];
+  const sorted = Array.from(url.searchParams.keys()).sort();
+  for (const name of sorted) {{
+    if (shouldStripParam(name)) continue;
+    params.push(name + '=' + url.searchParams.get(name));
+  }}
+  return params.length ? url.pathname + '?' + params.join('&') : url.pathname;
+}}
 
 export default {{
   async fetch(request, env) {{
     const url = new URL(request.url);
-    const key = url.pathname + url.search;
+    const key = normalizedKey(url);
     const score = SCORES[key];
     if (score === undefined || score <= {threshold}) {{
       return fetch(request, {{ cf: {{ cacheTtl: 0 }} }});

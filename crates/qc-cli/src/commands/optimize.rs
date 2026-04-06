@@ -294,6 +294,10 @@ pub(crate) fn load_config(args: &OptimizeArgs) -> anyhow::Result<ScenarioConfig>
         config.scoring_version = sv;
     }
 
+    // CLI --time-window always propagates to ScenarioConfig so scoring uses
+    // the same window as feature aggregation.
+    config.time_window_seconds = args.time_window;
+
     Ok(config)
 }
 

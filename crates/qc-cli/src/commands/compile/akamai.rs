@@ -65,14 +65,25 @@ pub(super) fn compile_akamai(
     }
 
     // 4. Admission gate → EdgeWorker behavior
+    let cache_key_config = if strip_params.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "query_string_strip": strip_params }))
+    };
     let edgeworker = match &ir.admission_rule {
         AdmissionRule::Always => None,
-        AdmissionRule::ScoreThreshold { threshold } => {
-            Some(gen_akamai_edgeworker(*threshold, "score", score_map))
-        }
-        AdmissionRule::ScoreDensityThreshold { threshold } => {
-            Some(gen_akamai_edgeworker(*threshold, "density", score_map))
-        }
+        AdmissionRule::ScoreThreshold { threshold } => Some(gen_akamai_edgeworker(
+            *threshold,
+            "score",
+            score_map,
+            cache_key_config.as_ref(),
+        )),
+        AdmissionRule::ScoreDensityThreshold { threshold } => Some(gen_akamai_edgeworker(
+            *threshold,
+            "density",
+            score_map,
+            cache_key_config.as_ref(),
+        )),
     };
 
     if edgeworker.is_some() {
@@ -248,6 +259,7 @@ pub(super) fn gen_akamai_edgeworker(
     threshold: f64,
     mode: &str,
     score_map: Option<&HashMap<String, f64>>,
+    cache_key_config: Option<&serde_json::Value>,
 ) -> String {
     let scores_js = if let Some(map) = score_map {
         // Use JSON serialization to safely escape keys (prevents JS injection)
@@ -261,14 +273,56 @@ pub(super) fn gen_akamai_edgeworker(
         "{ /* Run: qc compile --scores policy.json to populate */ }".to_string()
     };
 
+    let strip_params = cache_key_config
+        .and_then(|cfg| cfg["query_string_strip"].as_array())
+        .map(|params| {
+            params
+                .iter()
+                .filter_map(|p| p.as_str())
+                .map(|p| format!("'{p}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+
     format!(
         r#"// quant-cache admission gate EdgeWorker
 // Mode: {mode}, threshold: {threshold}
 
 const SCORES = {scores_js};
+const STRIP_PARAMS = [{strip_params}];
+
+function shouldStripParam(name) {{
+  for (let i = 0; i < STRIP_PARAMS.length; i++) {{
+    const pattern = STRIP_PARAMS[i];
+    if (pattern.endsWith('*')) {{
+      if (name.startsWith(pattern.slice(0, -1))) return true;
+    }} else if (name === pattern) {{
+      return true;
+    }}
+  }}
+  return false;
+}}
+
+function normalizedKey(request) {{
+  const params = [];
+  if (request.query) {{
+    const sorted = request.query.split('&').map(p => p.split('=')[0]).sort();
+    const queryMap = {{}};
+    for (const pair of request.query.split('&')) {{
+      const idx = pair.indexOf('=');
+      if (idx >= 0) queryMap[pair.slice(0, idx)] = pair.slice(idx + 1);
+    }}
+    for (const name of sorted) {{
+      if (shouldStripParam(name)) continue;
+      params.push(name + '=' + (queryMap[name] || ''));
+    }}
+  }}
+  return params.length ? request.path + '?' + params.join('&') : request.path;
+}}
 
 export function onClientRequest(request) {{
-  const key = request.path + (request.query ? '?' + request.query : '');
+  const key = normalizedKey(request);
   const score = SCORES[key];
   if (score === undefined || score <= {threshold}) {{
     // Sub-threshold: bypass cache
