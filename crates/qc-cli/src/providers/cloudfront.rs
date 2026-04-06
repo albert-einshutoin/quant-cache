@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::Path;
 
 use chrono::NaiveDateTime;
@@ -36,13 +36,36 @@ impl ProviderLogParser for CloudFrontParser {
         let mut events = Vec::new();
 
         const MAX_LINE_BYTES: usize = 64 * 1024;
+        let mut buf = Vec::with_capacity(4096);
+        let mut reader = reader;
 
-        for line in reader.lines() {
-            let line = line?;
-            if line.len() > MAX_LINE_BYTES {
-                tracing::warn!("skipping oversized line ({} bytes)", line.len());
+        loop {
+            buf.clear();
+            // Read until newline with bounded allocation via take()
+            let bytes_read = (&mut reader)
+                .take((MAX_LINE_BYTES + 1) as u64)
+                .read_until(b'\n', &mut buf)?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+            if buf.len() > MAX_LINE_BYTES && !buf.ends_with(b"\n") {
+                tracing::warn!("skipping oversized line (>{MAX_LINE_BYTES} bytes)");
+                // Drain remainder of this line
+                loop {
+                    buf.clear();
+                    let n = (&mut reader)
+                        .take(MAX_LINE_BYTES as u64)
+                        .read_until(b'\n', &mut buf)?;
+                    if n == 0 || buf.ends_with(b"\n") {
+                        break;
+                    }
+                }
                 continue;
             }
+            let line = match std::str::from_utf8(&buf) {
+                Ok(s) => s.trim_end(),
+                Err(_) => continue,
+            };
             if line.starts_with('#') || line.is_empty() {
                 continue;
             }

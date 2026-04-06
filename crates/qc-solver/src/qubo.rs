@@ -113,9 +113,11 @@ impl QuadraticSolver for SimulatedAnnealingSolver {
 
         for &idx in &order {
             let obj = &problem.objects[idx];
-            if obj.net_benefit > 0.0 && used_bytes + obj.size_bytes <= problem.capacity_bytes {
+            if obj.net_benefit > 0.0
+                && used_bytes.saturating_add(obj.size_bytes) <= problem.capacity_bytes
+            {
                 state[idx] = true;
-                used_bytes += obj.size_bytes;
+                used_bytes = used_bytes.saturating_add(obj.size_bytes);
             }
         }
 

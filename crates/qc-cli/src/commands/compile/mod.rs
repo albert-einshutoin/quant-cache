@@ -64,6 +64,17 @@ pub fn run(args: &CompileArgs) -> anyhow::Result<()> {
             for (re, repl) in &key_regexes {
                 k = re.replace_all(&k, repl.as_str()).to_string();
             }
+            // Sort query parameters alphabetically to match runtime normalization
+            if let Some(idx) = k.find('?') {
+                let (path, query) = k.split_at(idx + 1);
+                let mut params: Vec<&str> = query.split('&').filter(|s| !s.is_empty()).collect();
+                params.sort();
+                k = format!("{}{}", path, params.join("&"));
+                // Remove trailing '?' if all params were stripped
+                if k.ends_with('?') {
+                    k.pop();
+                }
+            }
             k
         };
 
