@@ -3,12 +3,79 @@ use qc_model::scenario::{FreshnessModel, ScenarioConfig, ScoringVersion};
 
 use crate::error::SolverError;
 
+/// Trait for scoring strategies. Implement this to add new scoring versions.
+pub trait Scorer {
+    /// Score a single object.
+    fn score(
+        &self,
+        object: &ObjectFeatures,
+        config: &ScenarioConfig,
+    ) -> Result<ScoredObject, SolverError>;
+
+    /// Batch-score all objects. Default implementation calls `score` per object.
+    fn score_all(
+        &self,
+        objects: &[ObjectFeatures],
+        config: &ScenarioConfig,
+    ) -> Result<Vec<ScoredObject>, SolverError> {
+        objects.iter().map(|o| self.score(o, config)).collect()
+    }
+}
+
+/// V1: frequency-based demand estimation.
+pub struct V1Scorer;
+
+impl Scorer for V1Scorer {
+    fn score(
+        &self,
+        object: &ObjectFeatures,
+        config: &ScenarioConfig,
+    ) -> Result<ScoredObject, SolverError> {
+        BenefitCalculator::score_v1(object, config)
+    }
+}
+
+/// V2: reuse-distance-aware demand estimation.
+/// Requires a global mean object size for consistent capacity estimates.
+pub struct V2Scorer {
+    pub mean_object_size: f64,
+}
+
+impl Scorer for V2Scorer {
+    fn score(
+        &self,
+        object: &ObjectFeatures,
+        config: &ScenarioConfig,
+    ) -> Result<ScoredObject, SolverError> {
+        BenefitCalculator::score_v2(object, config, self.mean_object_size)
+    }
+}
+
+/// Create the appropriate scorer for a config. For V2, computes global mean object size.
+pub fn create_scorer(objects: &[ObjectFeatures], config: &ScenarioConfig) -> Box<dyn Scorer> {
+    match config.scoring_version {
+        ScoringVersion::V1Frequency => Box::new(V1Scorer),
+        ScoringVersion::V2ReuseDistance => {
+            let eligible: Vec<&ObjectFeatures> =
+                objects.iter().filter(|o| o.eligible_for_cache).collect();
+            let mean_size = if eligible.is_empty() {
+                1.0
+            } else {
+                eligible.iter().map(|o| o.size_bytes as f64).sum::<f64>() / eligible.len() as f64
+            };
+            Box::new(V2Scorer {
+                mean_object_size: mean_size,
+            })
+        }
+    }
+}
+
+/// Convenience façade — delegates to the appropriate Scorer based on config.
+/// Backward-compatible with existing callers.
 pub struct BenefitCalculator;
 
 impl BenefitCalculator {
-    /// Score a single object. For V2 scoring, uses the object's own size to
-    /// estimate cache capacity in objects. Prefer `score_all` for batch scoring,
-    /// which computes a global mean object size for consistent capacity estimates.
+    /// Score a single object.
     pub fn score(
         object: &ObjectFeatures,
         config: &ScenarioConfig,
@@ -22,36 +89,18 @@ impl BenefitCalculator {
         }
     }
 
-    /// Batch-score all objects. For V2, computes a global mean object size
-    /// so that cache_capacity_objects is consistent across all objects.
+    /// Batch-score all objects.
     pub fn score_all(
         objects: &[ObjectFeatures],
         config: &ScenarioConfig,
     ) -> Result<Vec<ScoredObject>, SolverError> {
-        match config.scoring_version {
-            ScoringVersion::V1Frequency => {
-                objects.iter().map(|o| Self::score_v1(o, config)).collect()
-            }
-            ScoringVersion::V2ReuseDistance => {
-                let eligible: Vec<&ObjectFeatures> =
-                    objects.iter().filter(|o| o.eligible_for_cache).collect();
-                let mean_size = if eligible.is_empty() {
-                    1.0
-                } else {
-                    eligible.iter().map(|o| o.size_bytes as f64).sum::<f64>()
-                        / eligible.len() as f64
-                };
-                objects
-                    .iter()
-                    .map(|o| Self::score_v2(o, config, mean_size))
-                    .collect()
-            }
-        }
+        let scorer = create_scorer(objects, config);
+        scorer.score_all(objects, config)
     }
 
     /// V1 scoring: frequency-based demand estimation.
     /// expected_hits = request_count (all requests assumed to hit if cached).
-    fn score_v1(
+    pub(crate) fn score_v1(
         object: &ObjectFeatures,
         config: &ScenarioConfig,
     ) -> Result<ScoredObject, SolverError> {
@@ -105,7 +154,7 @@ impl BenefitCalculator {
     /// Falls back to V1 scoring when reuse distance data is not available.
     /// A reuse_distance_p50 of 0.0 is valid (sequential repeated access)
     /// and produces p_hit = 1.0.
-    fn score_v2(
+    pub(crate) fn score_v2(
         object: &ObjectFeatures,
         config: &ScenarioConfig,
         mean_object_size: f64,
