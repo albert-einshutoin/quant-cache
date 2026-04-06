@@ -131,12 +131,11 @@ impl QuadraticSolver for SimulatedAnnealingSolver {
 
             // Compute delta
             let new_val = !state[idx];
-            let size_delta = if new_val {
-                obj.size_bytes as i64
+            let new_used = if new_val {
+                used_bytes.saturating_add(obj.size_bytes)
             } else {
-                -(obj.size_bytes as i64)
+                used_bytes.saturating_sub(obj.size_bytes)
             };
-            let new_used = (used_bytes as i64 + size_delta) as u64;
 
             // Check capacity
             if new_val && new_used > problem.capacity_bytes {

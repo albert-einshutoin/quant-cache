@@ -49,11 +49,13 @@ pub fn default_eval(
         .map(|d| d.cache_key.clone())
         .collect();
 
-    // Simple replay: count cost savings
+    // Replay: sum origin cost savings + latency value for cache hits
+    let latency_value = config.latency_value_per_ms;
     let mut savings = 0.0;
     for event in events {
         if event.eligible_for_cache && cached_keys.contains(&event.cache_key) {
             savings += event.origin_fetch_cost.unwrap_or(0.0);
+            savings += event.response_latency_ms.unwrap_or(0.0) * latency_value;
         }
     }
 
