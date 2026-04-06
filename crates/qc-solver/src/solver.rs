@@ -12,6 +12,8 @@ pub struct SolverResult {
     pub feasible: bool,
     pub gap: Option<f64>,
     pub shadow_price: Option<f64>,
+    /// SA solver: final annealing temperature.
+    pub temperature_final: Option<f64>,
 }
 
 pub trait Solver {

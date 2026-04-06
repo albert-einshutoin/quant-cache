@@ -35,6 +35,7 @@ impl Solver for GreedySolver {
             feasible: true,
             gap: None,
             shadow_price: Some(shadow_price),
+            temperature_final: None,
         })
     }
 }

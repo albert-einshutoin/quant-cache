@@ -16,6 +16,7 @@ rand = "0.8"
 
 [dev-dependencies]
 proptest = "1"
+chrono = { workspace = true }
 qc-simulate = { workspace = true }
 serde_json = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -28,6 +28,7 @@ impl Solver for ExactIlpSolver {
                 feasible: true,
                 gap: None,
                 shadow_price: None,
+                temperature_final: None,
             });
         }
 
@@ -98,6 +99,7 @@ impl Solver for ExactIlpSolver {
             feasible: true,
             gap: None,
             shadow_price: None,
+            temperature_final: None,
         })
     }
 }

@@ -575,3 +575,43 @@ fn aggregate_features_without_reuse_leaves_none() {
         .count();
     assert_eq!(has_rd, 0, "compute_reuse=false should leave all rd as None");
 }
+
+// ── NaN / Inf / zero boundary tests ────────────────────────────────
+
+#[test]
+fn nan_origin_cost_clamped_to_zero_benefit() {
+    let mut f = make_object("nan-cost", 1000, 100, true);
+    f.avg_origin_cost = f64::NAN;
+    let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
+    assert!(
+        scored.net_benefit.is_finite(),
+        "NaN input should produce finite net_benefit, got {}",
+        scored.net_benefit
+    );
+}
+
+#[test]
+fn inf_latency_clamped_to_zero_benefit() {
+    let mut f = make_object("inf-lat", 1000, 100, true);
+    f.avg_latency_saving_ms = f64::INFINITY;
+    let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
+    assert!(
+        scored.net_benefit.is_finite(),
+        "Inf latency should produce finite net_benefit, got {}",
+        scored.net_benefit
+    );
+}
+
+#[test]
+fn zero_size_object_scores_without_panic() {
+    let f = make_object("zero-size", 0, 100, true);
+    let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
+    assert!(scored.net_benefit.is_finite());
+}
+
+#[test]
+fn zero_request_count_scores_zero() {
+    let f = make_object("no-requests", 1000, 0, true);
+    let scored = BenefitCalculator::score(&f, &ttl_only_config()).unwrap();
+    assert_eq!(scored.net_benefit, 0.0);
+}

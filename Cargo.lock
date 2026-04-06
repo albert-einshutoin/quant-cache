@@ -863,6 +863,7 @@ dependencies = [
 name = "qc-solver"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "criterion",
  "good_lp",
  "proptest",

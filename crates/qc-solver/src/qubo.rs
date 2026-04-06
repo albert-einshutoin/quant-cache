@@ -4,6 +4,7 @@ use qc_model::object::{ScoreBreakdown, ScoredObject};
 use qc_model::policy::PolicyDecision;
 
 use crate::error::SolverError;
+use crate::solver::SolverResult;
 
 /// A pairwise interaction between two objects.
 #[derive(Debug, Clone)]
@@ -26,19 +27,9 @@ pub struct QuadraticProblem {
     pub capacity_bytes: u64,
 }
 
-/// Result of solving a quadratic problem.
-#[derive(Debug, Clone)]
-pub struct QuadraticResult {
-    pub decisions: Vec<PolicyDecision>,
-    pub objective_value: f64,
-    pub solve_time_ms: u64,
-    pub feasible: bool,
-    pub temperature_final: f64,
-}
-
 /// Trait for solvers that handle quadratic (QUBO) problems.
 pub trait QuadraticSolver {
-    fn solve(&self, problem: &QuadraticProblem) -> Result<QuadraticResult, SolverError>;
+    fn solve(&self, problem: &QuadraticProblem) -> Result<SolverResult, SolverError>;
 }
 
 /// Simulated annealing solver for QUBO problems.
@@ -61,7 +52,7 @@ impl Default for SimulatedAnnealingSolver {
 }
 
 impl QuadraticSolver for SimulatedAnnealingSolver {
-    fn solve(&self, problem: &QuadraticProblem) -> Result<QuadraticResult, SolverError> {
+    fn solve(&self, problem: &QuadraticProblem) -> Result<SolverResult, SolverError> {
         use rand::rngs::StdRng;
         use rand::{Rng, SeedableRng};
 
@@ -69,12 +60,14 @@ impl QuadraticSolver for SimulatedAnnealingSolver {
         let n = problem.objects.len();
 
         if n == 0 {
-            return Ok(QuadraticResult {
+            return Ok(SolverResult {
                 decisions: vec![],
                 objective_value: 0.0,
                 solve_time_ms: 0,
                 feasible: true,
-                temperature_final: 0.0,
+                gap: None,
+                shadow_price: None,
+                temperature_final: Some(0.0),
             });
         }
 
@@ -200,12 +193,14 @@ impl QuadraticSolver for SimulatedAnnealingSolver {
             })
             .collect();
 
-        Ok(QuadraticResult {
+        Ok(SolverResult {
             decisions,
             objective_value: best_obj,
             solve_time_ms: start.elapsed().as_millis() as u64,
             feasible: true,
-            temperature_final: temp,
+            gap: None,
+            shadow_price: None,
+            temperature_final: Some(temp),
         })
     }
 }

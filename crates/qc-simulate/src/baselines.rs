@@ -226,17 +226,25 @@ struct GdsfEntry {
     freq: u64,
     cost: f64,
     priority: f64,
+    /// Unique key in the priority BTreeMap for O(log n) eviction.
+    priority_key: (u64, u64),
     insert_time: DateTime<Utc>,
     version: Option<String>,
 }
 
 /// GreedyDual-Size-Frequency eviction policy with stale detection.
+///
+/// Uses a BTreeMap priority index for O(log n) eviction instead of O(n) scan.
 pub struct GdsfPolicy {
     capacity_bytes: u64,
     used_bytes: u64,
     ttl_seconds: u64,
     inflation: f64,
     entries: HashMap<String, GdsfEntry>,
+    /// (priority_bits, seq) → cache_key for O(log n) min-priority eviction.
+    priority_index: BTreeMap<(u64, u64), String>,
+    /// Monotonic counter for tie-breaking in priority_index.
+    seq: u64,
 }
 
 impl GdsfPolicy {
@@ -247,6 +255,8 @@ impl GdsfPolicy {
             ttl_seconds: 3600,
             inflation: 0.0,
             entries: HashMap::new(),
+            priority_index: BTreeMap::new(),
+            seq: 0,
         }
     }
 
@@ -262,21 +272,27 @@ impl GdsfPolicy {
         self.inflation + cost * freq as f64 / size as f64
     }
 
+    fn priority_bits(p: f64) -> u64 {
+        let bits = p.to_bits();
+        // Flip so that BTreeMap ordering matches f64 ordering for non-NaN values
+        if bits & (1u64 << 63) != 0 {
+            !bits
+        } else {
+            bits ^ (1u64 << 63)
+        }
+    }
+
+    fn next_priority_key(&mut self, priority: f64) -> (u64, u64) {
+        self.seq += 1;
+        (Self::priority_bits(priority), self.seq)
+    }
+
     fn evict_until_fits(&mut self, needed: u64) {
         while self.used_bytes + needed > self.capacity_bytes {
-            let victim = self
-                .entries
-                .iter()
-                .min_by(|a, b| {
-                    a.1.priority
-                        .partial_cmp(&b.1.priority)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .map(|(k, v)| (k.clone(), v.priority));
-
-            if let Some((key, priority)) = victim {
-                self.inflation = priority;
+            if let Some((&pkey, _)) = self.priority_index.iter().next() {
+                let key = self.priority_index.remove(&pkey).unwrap();
                 if let Some(entry) = self.entries.remove(&key) {
+                    self.inflation = entry.priority;
                     self.used_bytes -= entry.size;
                 }
             } else {
@@ -299,21 +315,35 @@ impl CachePolicy for GdsfPolicy {
         let cost = event.origin_fetch_cost.unwrap_or(1.0);
 
         if self.entries.contains_key(&event.cache_key) {
-            let stale = {
-                let entry = self.entries.get(&event.cache_key).unwrap();
-                check_stale(
-                    entry.insert_time,
-                    entry.version.as_deref(),
-                    event,
-                    self.ttl_seconds,
-                )
-            };
+            // Copy data needed for stale check and priority update
+            let entry = self.entries.get(&event.cache_key).unwrap();
+            let stale = check_stale(
+                entry.insert_time,
+                entry.version.as_deref(),
+                event,
+                self.ttl_seconds,
+            );
+            let old_pkey = entry.priority_key;
+
+            // Update priority index
+            self.priority_index.remove(&old_pkey);
+
+            let inflation = self.inflation;
+            let new_pkey = self.next_priority_key(0.0); // placeholder, update below
 
             let entry = self.entries.get_mut(&event.cache_key).unwrap();
             entry.freq += 1;
-            entry.priority = self.inflation + entry.cost * entry.freq as f64 / entry.size as f64;
+            entry.priority = if entry.size > 0 {
+                inflation + entry.cost * entry.freq as f64 / entry.size as f64
+            } else {
+                inflation
+            };
+            let pkey = (Self::priority_bits(entry.priority), new_pkey.1);
+            entry.priority_key = pkey;
+            self.priority_index.insert(pkey, event.cache_key.clone());
 
             if stale {
+                let entry = self.entries.get_mut(&event.cache_key).unwrap();
                 entry.insert_time = event.timestamp;
                 entry.version = event.version_or_etag.clone();
                 CacheOutcome::StaleHit
@@ -330,6 +360,8 @@ impl CachePolicy for GdsfPolicy {
 
             let freq = 1;
             let priority = self.compute_priority(cost, freq, size);
+            let pkey = self.next_priority_key(priority);
+            self.priority_index.insert(pkey, event.cache_key.clone());
             self.entries.insert(
                 event.cache_key.clone(),
                 GdsfEntry {
@@ -337,6 +369,7 @@ impl CachePolicy for GdsfPolicy {
                     freq,
                     cost,
                     priority,
+                    priority_key: pkey,
                     insert_time: event.timestamp,
                     version: event.version_or_etag.clone(),
                 },

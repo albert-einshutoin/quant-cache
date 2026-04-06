@@ -106,20 +106,13 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
         args.solver.as_str()
     };
 
-    let (decisions, objective_value, solve_time_ms, shadow_price, gap) = match solver_name {
+    let result = match solver_name {
         "ilp" => {
             tracing::info!("using ILP solver");
             let constraint = qc_model::scenario::CapacityConstraint {
                 capacity_bytes: config.capacity_bytes,
             };
-            let r = qc_solver::ilp::ExactIlpSolver.solve(&scored, &constraint)?;
-            (
-                r.decisions,
-                r.objective_value,
-                r.solve_time_ms,
-                r.shadow_price,
-                r.gap,
-            )
+            qc_solver::ilp::ExactIlpSolver.solve(&scored, &constraint)?
         }
         "sa" => {
             tracing::info!("using SA (QUBO) solver");
@@ -196,33 +189,26 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
                 capacity_bytes: config.capacity_bytes,
             };
             let solver = SimulatedAnnealingSolver::default();
-            let r = solver.solve(&problem)?;
-            (r.decisions, r.objective_value, r.solve_time_ms, None, None)
+            solver.solve(&problem)?
         }
         _ => {
             tracing::info!("using greedy solver");
             let constraint = qc_model::scenario::CapacityConstraint {
                 capacity_bytes: config.capacity_bytes,
             };
-            let r = qc_solver::greedy::GreedySolver.solve(&scored, &constraint)?;
-            (
-                r.decisions,
-                r.objective_value,
-                r.solve_time_ms,
-                r.shadow_price,
-                r.gap,
-            )
+            qc_solver::greedy::GreedySolver.solve(&scored, &constraint)?
         }
     };
 
-    let num_cached = decisions.iter().filter(|d| d.cache).count();
-    let num_total = decisions.len();
+    let num_cached = result.decisions.iter().filter(|d| d.cache).count();
+    let num_total = result.decisions.len();
 
     let scored_size_map: std::collections::HashMap<&str, u64> = scored
         .iter()
         .map(|s| (s.cache_key.as_str(), s.size_bytes))
         .collect();
-    let cached_bytes: u64 = decisions
+    let cached_bytes: u64 = result
+        .decisions
         .iter()
         .filter(|d| d.cache)
         .map(|d| {
@@ -236,14 +222,14 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
     let policy_file = qc_model::policy::PolicyFile {
         solver: qc_model::policy::SolverMetadata {
             solver_name: solver_name.to_string(),
-            objective_value,
-            solve_time_ms,
-            shadow_price,
-            optimality_gap: gap,
+            objective_value: result.objective_value,
+            solve_time_ms: result.solve_time_ms,
+            shadow_price: result.shadow_price,
+            optimality_gap: result.gap,
             capacity_bytes: config.capacity_bytes,
             cached_bytes,
         },
-        decisions,
+        decisions: result.decisions,
     };
     let json = serde_json::to_string_pretty(&policy_file)?;
     std::fs::write(&args.output, &json)?;
@@ -252,9 +238,9 @@ pub fn run(args: &OptimizeArgs) -> anyhow::Result<()> {
     let mut out = stdout.lock();
     writeln!(out, "Solver: {solver_name}")?;
     writeln!(out, "Optimized: {num_cached}/{num_total} objects cached")?;
-    writeln!(out, "Objective value: {objective_value:.4}")?;
-    writeln!(out, "Solve time: {solve_time_ms}ms")?;
-    if let Some(sp) = shadow_price {
+    writeln!(out, "Objective value: {:.4}", result.objective_value)?;
+    writeln!(out, "Solve time: {}ms", result.solve_time_ms)?;
+    if let Some(sp) = result.shadow_price {
         writeln!(out, "Shadow price: {sp:.6} $/byte")?;
     }
     writeln!(out, "Policy → {}", args.output.display())?;
