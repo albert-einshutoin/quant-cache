@@ -61,12 +61,21 @@ fn extract_group_interactions(
             continue;
         }
 
-        // Generate all pairs within the group, scored by combined request_count
+        // For large groups, pre-sort by request_count descending and only pair
+        // the top sqrt(2 * top_k) members to avoid O(n²) pair generation.
+        let max_members = ((2.0 * top_k_per_group as f64).sqrt().ceil() as usize + 1)
+            .max(top_k_per_group)
+            .min(members.len());
+
+        let mut sorted_members: Vec<&ObjectFeatures> = members.clone();
+        sorted_members.sort_by(|a, b| b.request_count.cmp(&a.request_count));
+        let selected = &sorted_members[..max_members];
+
         let mut group_pairs: Vec<CoAccessPair> = Vec::new();
-        for i in 0..members.len() {
-            for j in (i + 1)..members.len() {
-                let a = members[i];
-                let b = members[j];
+        for i in 0..selected.len() {
+            for j in (i + 1)..selected.len() {
+                let a = selected[i];
+                let b = selected[j];
                 let (key_a, key_b) = if a.cache_key < b.cache_key {
                     (a.cache_key.clone(), b.cache_key.clone())
                 } else {

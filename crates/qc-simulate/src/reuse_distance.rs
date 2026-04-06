@@ -12,19 +12,21 @@ pub struct ReuseDistanceStats {
     pub sample_count: usize,
 }
 
+/// Maximum gap (in accesses) to scan for reuse distance computation.
+/// Gaps larger than this are recorded as the cap value, avoiding O(n²) worst case.
+const MAX_REUSE_WINDOW: usize = 100_000;
+
 /// Compute reuse distance distribution for each cache_key in the trace.
 ///
 /// Reuse distance = number of distinct cache_keys accessed between two consecutive
-/// accesses to the same key (stack distance).
+/// accesses to the same key (stack distance). Gaps exceeding `MAX_REUSE_WINDOW`
+/// are capped to bound computation to O(n × MAX_REUSE_WINDOW).
 pub fn compute_reuse_distances(events: &[RequestTraceEvent]) -> Vec<ReuseDistanceStats> {
     // Track last access position per key
     let mut last_seen: HashMap<&str, usize> = HashMap::new();
     // Track the set of distinct keys since last access (approximated via position diff)
     let mut distances: HashMap<String, Vec<usize>> = HashMap::new();
 
-    // We approximate reuse distance as the number of distinct keys accessed
-    // between consecutive accesses to the same key.
-    // For efficiency, we use an ordered access log and count unique keys in the window.
     let access_order: Vec<&str> = events
         .iter()
         .filter(|e| e.eligible_for_cache)
@@ -33,16 +35,25 @@ pub fn compute_reuse_distances(events: &[RequestTraceEvent]) -> Vec<ReuseDistanc
 
     for (pos, &key) in access_order.iter().enumerate() {
         if let Some(&prev_pos) = last_seen.get(key) {
-            let mut seen_in_window: std::collections::HashSet<&str> =
-                std::collections::HashSet::new();
-            let start = (prev_pos + 1).min(pos);
-            for &k in &access_order[start..pos] {
-                if k != key {
-                    seen_in_window.insert(k);
+            let gap = pos - prev_pos;
+            if gap > MAX_REUSE_WINDOW {
+                // Record capped distance to avoid O(n) inner scan
+                distances
+                    .entry(key.to_string())
+                    .or_default()
+                    .push(MAX_REUSE_WINDOW);
+            } else {
+                let mut seen_in_window: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                let start = prev_pos + 1;
+                for &k in &access_order[start..pos] {
+                    if k != key {
+                        seen_in_window.insert(k);
+                    }
                 }
+                let distinct = seen_in_window.len();
+                distances.entry(key.to_string()).or_default().push(distinct);
             }
-            let distinct = seen_in_window.len();
-            distances.entry(key.to_string()).or_default().push(distinct);
         }
         last_seen.insert(key, pos);
     }

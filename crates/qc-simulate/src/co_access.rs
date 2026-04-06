@@ -23,9 +23,12 @@ pub fn extract_co_access(
     let eligible: Vec<&RequestTraceEvent> =
         events.iter().filter(|e| e.eligible_for_cache).collect();
 
-    let mut pair_counts: HashMap<(String, String), u64> = HashMap::new();
+    const MAX_INNER_PAIRS: usize = 50_000_000;
 
-    for (i, a) in eligible.iter().enumerate() {
+    let mut pair_counts: HashMap<(String, String), u64> = HashMap::new();
+    let mut total_pairs: usize = 0;
+
+    'outer: for (i, a) in eligible.iter().enumerate() {
         let a_time = a.timestamp;
         for b in &eligible[i + 1..] {
             let diff = (b.timestamp - a_time).num_milliseconds();
@@ -41,6 +44,11 @@ pub fn extract_co_access(
                 (b.cache_key.clone(), a.cache_key.clone())
             };
             *pair_counts.entry(pair).or_insert(0) += 1;
+            total_pairs += 1;
+            if total_pairs >= MAX_INNER_PAIRS {
+                tracing::warn!("co_access: pair limit ({MAX_INNER_PAIRS}) reached, truncating");
+                break 'outer;
+            }
         }
     }
 
