@@ -302,33 +302,85 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase E — Provider Validation, Multi-Vendor, Quantum Search
+## Phase E — Parametric Validation + Multi-Vendor (REVISED)
 
-**Goal:** Deploy validation, additional providers, quantum-inspired DSL search
+**Goal:** Systematic parametric validation, provider schema validation, quantum-inspired DSL search
+
+> **History (2026-04-06): Phase E goal revised.**
+> Original goal was "real deploy validation" — deploying to a production CloudFront
+> environment and measuring before/after cost. This was replaced with a parametric
+> validation suite for the following reasons:
+>
+> 1. A single production trace is N=1 — it only covers one Zipf distribution, one
+>    object size profile, one update rate. It cannot validate edge cases.
+> 2. At individual/small-team scale, production traffic is statistically thin.
+>    Too few requests for meaningful significance testing.
+> 3. Synthetic data with controlled parameters can systematically sweep the full
+>    parameter space (2,880+ combinations), covering scenarios that production
+>    traces may never encounter.
+> 4. Automated invariant assertions (Belady ceiling, capacity bounds, NaN guards,
+>    monotonicity) are more rigorous than "it worked in prod once."
+> 5. The suite is reproducible — anyone can run it. Production validation is
+>    environment-dependent and non-reproducible.
+>
+> Production replay is retained as optional Phase F for those who have real CDN logs.
 
 ### Deliverables
 
-1. **Provider schema validation**
-   - Validate Cloudflare ruleset output against Cloudflare API schema
-   - Validate CloudFront output against AWS API schema
-   - `qc compile --validate` flag
+1. **Provider schema validation** — DONE
+   - `qc compile --validate` flag for all 4 targets
 
-2. **Real deploy validation**
-   - End-to-end: real CloudFront trace → policy-search → compile → deploy → measure
-   - Before/after cost comparison on production traffic
+2. **Parametric validation suite** (replaces "real deploy validation")
+   - Parameter sweep: Zipf α × capacity ratio × object count × update rate × scoring × solver
+   - Three tiers: smoke (default, <30s), CI (release, <5min), full (ignored, <60min)
+   - Invariants: Belady ceiling, objective ordering, capacity, NaN/Inf, monotonicity, determinism
+   - Object size distribution + freshness model sub-sweeps
 
-3. **Fastly VCL target**
+3. **Fastly VCL target** — DONE
    - `qc compile --target fastly`
-   - VCL snippet generation for bypass/TTL/admission rules
 
-4. **Cross-CDN comparison**
-   - Same PolicyIR → different targets → compare generated configs
-   - Provider-specific limitation documentation
+4. **Cross-CDN comparison** — DONE
+   - `qc compile-compare` command
 
 5. **Quantum-inspired policy search**
    - SA/QUBO over the full discrete PolicyIR configuration space
    - Replace grid+random with structured annealing over DSL
-   - Compare quantum-inspired vs grid search quality
+
+### Validation Tiers
+
+| Tier | When | Combos | Runtime | Gate |
+|------|------|--------|---------|------|
+| Smoke | `cargo test` | ~30 | <30s | Every commit |
+| CI | `cargo test --release` | ~200 | <5min | PR merge |
+| Full | `cargo test --release -- --ignored` | ~2,880 | <60min | Release |
+
+---
+
+## Phase F — Production Replay (Optional)
+
+**Goal:** Validate on real CDN logs for those with production environments.
+
+This is not a gate for project completion. It is an optional demonstration that
+the framework produces meaningful results on real traffic patterns.
+
+- End-to-end: real CloudFront trace → policy-search → compile → deploy → measure
+- Before/after cost comparison on production traffic
+- Document results as a case study
+
+---
+
+## Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-04-02 | V2.0 roadmap: evolve from eval framework to economic cache control plane | Phases A-E complete, strategic direction established |
+| 2026-04-05 | 5-agent review → P0-P3 remediation cycle | Architecture/Rust/Security/Test/Codex review identified CRITICAL/HIGH issues in baselines, compile, scoring |
+| 2026-04-06 | Gitflow adoption (develop/main) | Growing commit volume needs structured branching for review cycles |
+| 2026-04-06 | Phase E goal revised: "real deploy validation" → "parametric validation suite" | N=1 production trace is unfalsifiable; parametric sweep covers 2,880+ scenarios systematically |
+| 2026-04-06 | Production replay demoted to optional Phase F | Individual-scale production traffic is statistically thin; parametric tests are more rigorous |
+| 2026-04-06 | Scorer trait introduced (V1Scorer/V2Scorer) | Enables clean extension for future scoring versions without modifying BenefitCalculator |
+| 2026-04-06 | SolverResult/QuadraticResult unified | Eliminates 5-tuple destructuring in CLI; single result type for all solvers |
+| 2026-04-06 | O(n²) algorithms capped | reuse_distance (100K gap), co_access (50M pairs), group_interactions (sqrt pre-selection) |
 
 ---
 
@@ -340,3 +392,4 @@ they inform which policy configurations handle correlated access patterns.
 | B | "Policy IR: A Unified Language for Cache Configuration" | DSL design |
 | C | "Quantum-Inspired Policy Search for CDN Caching" | SA/QUBO over DSL |
 | D | "From Trace to Cloudflare Rules: Automated Cache Configuration" | Vendor compiler |
+| E | "2,880 Scenarios: Parametric Validation for Cache Economics" | Validation methodology |
