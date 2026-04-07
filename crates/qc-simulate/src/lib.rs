@@ -10,6 +10,7 @@
 
 pub mod baselines;
 pub mod co_access;
+pub mod compact_baselines;
 pub mod comparator;
 pub mod engine;
 pub mod error;
