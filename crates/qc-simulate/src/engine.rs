@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use qc_model::compact_trace::CompactTraceEvent;
+use qc_model::intern::StringInterner;
 use qc_model::metrics::MetricsSummary;
 use qc_model::scenario::StalePenaltyClass;
 use qc_model::trace::RequestTraceEvent;
@@ -138,6 +140,111 @@ impl TraceReplayEngine {
                     metrics.stale_serve_count += 1;
                     metrics.estimated_cost_savings += origin_cost;
                     let penalty = econ.stale_penalty_for(&event.cache_key);
+                    metrics.policy_objective_value +=
+                        latency_ms * econ.latency_value_per_ms + origin_cost - penalty;
+                }
+                CacheOutcome::Miss => {
+                    metrics.cache_misses += 1;
+                    metrics.origin_egress_bytes += response_bytes;
+                }
+                CacheOutcome::Bypass => {
+                    metrics.cache_misses += 1;
+                    metrics.origin_egress_bytes += response_bytes;
+                }
+            }
+        }
+
+        if metrics.total_requests > 0 {
+            metrics.hit_ratio = metrics.cache_hits as f64 / metrics.total_requests as f64;
+            metrics.stale_serve_rate =
+                metrics.stale_serve_count as f64 / metrics.total_requests as f64;
+        }
+        if metrics.total_bytes_served > 0 {
+            metrics.byte_hit_ratio =
+                metrics.bytes_from_cache as f64 / metrics.total_bytes_served as f64;
+        }
+
+        Ok(metrics)
+    }
+}
+
+// ── Compact Replay (u32-keyed) ─────────────────────────────────────
+
+/// A cache policy that operates on compact (interned) trace events.
+pub trait CompactCachePolicy {
+    fn name(&self) -> &str;
+
+    fn on_request(&mut self, event: &CompactTraceEvent) -> CacheOutcome;
+}
+
+/// Economic config for compact replay, keyed by interned u32 IDs.
+#[derive(Debug, Clone)]
+pub struct CompactReplayEconConfig {
+    pub latency_value_per_ms: f64,
+    per_object_stale_penalty: HashMap<u32, f64>,
+    pub default_stale_penalty: f64,
+}
+
+impl CompactReplayEconConfig {
+    /// Convert from string-keyed config using the interner.
+    pub fn from_econ_config(econ: &ReplayEconConfig, interner: &mut StringInterner) -> Self {
+        let per_object: HashMap<u32, f64> = econ
+            .per_object_stale_penalty
+            .iter()
+            .map(|(key, &val)| (interner.intern(key), val))
+            .collect();
+        Self {
+            latency_value_per_ms: econ.latency_value_per_ms,
+            per_object_stale_penalty: per_object,
+            default_stale_penalty: econ.default_stale_penalty,
+        }
+    }
+
+    fn stale_penalty_for(&self, cache_key_id: u32) -> f64 {
+        self.per_object_stale_penalty
+            .get(&cache_key_id)
+            .copied()
+            .unwrap_or(self.default_stale_penalty)
+    }
+}
+
+impl TraceReplayEngine {
+    /// Replay compact events with economic evaluation.
+    pub fn replay_compact_with_econ<P: CompactCachePolicy + ?Sized>(
+        events: &[CompactTraceEvent],
+        policy: &mut P,
+        econ: &CompactReplayEconConfig,
+    ) -> Result<MetricsSummary, SimulateError> {
+        if events.is_empty() {
+            return Err(SimulateError::EmptyTrace);
+        }
+
+        let mut metrics = MetricsSummary::default();
+
+        for event in events {
+            let outcome = policy.on_request(event);
+
+            metrics.total_requests += 1;
+            let response_bytes = event.effective_response_bytes();
+            metrics.total_bytes_served += response_bytes;
+
+            let origin_cost = event.origin_fetch_cost;
+            let latency_ms = event.response_latency_ms;
+
+            match outcome {
+                CacheOutcome::Hit => {
+                    metrics.cache_hits += 1;
+                    metrics.bytes_from_cache += response_bytes;
+                    metrics.estimated_cost_savings += origin_cost;
+                    metrics.policy_objective_value +=
+                        latency_ms * econ.latency_value_per_ms + origin_cost;
+                }
+                CacheOutcome::StaleHit => {
+                    metrics.cache_hits += 1;
+                    metrics.bytes_from_cache += response_bytes;
+                    metrics.stale_serve_count += 1;
+                    metrics.estimated_cost_savings += origin_cost;
+                    let penalty = econ.stale_penalty_for(event.cache_key_id);
                     metrics.policy_objective_value +=
                         latency_ms * econ.latency_value_per_ms + origin_cost - penalty;
                 }
