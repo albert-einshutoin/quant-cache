@@ -186,6 +186,10 @@ impl IrPolicy {
         for (re, replacement) in &self.key_transforms {
             key = re.replace_all(&key, replacement.as_str()).to_string();
         }
+        // Bound cache to prevent unbounded memory growth on large traces
+        if self.key_cache.len() >= 100_000 {
+            self.key_cache.clear();
+        }
         self.key_cache.insert(original.to_string(), key.clone());
         key
     }

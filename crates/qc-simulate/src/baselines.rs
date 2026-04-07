@@ -439,12 +439,14 @@ impl BeladyPolicy {
     }
 
     /// Next access position for a cache_key after the current position.
-    fn next_access(&self, key: &str) -> usize {
-        if let Some(queue) = self.future_accesses.get(key) {
-            for &pos in queue {
-                if pos > self.current_pos {
-                    return pos;
-                }
+    /// Drains consumed positions from the front for O(1) amortized lookup.
+    fn next_access(&mut self, key: &str) -> usize {
+        if let Some(queue) = self.future_accesses.get_mut(key) {
+            while queue.front().is_some_and(|&pos| pos <= self.current_pos) {
+                queue.pop_front();
+            }
+            if let Some(&pos) = queue.front() {
+                return pos;
             }
         }
         usize::MAX // never accessed again
@@ -452,10 +454,10 @@ impl BeladyPolicy {
 
     fn evict_until_fits(&mut self, needed: u64) {
         while self.used_bytes + needed > self.capacity_bytes {
-            // Find the cached object whose next access is farthest
-            let victim = self
-                .entries
-                .keys()
+            // Collect keys first to avoid borrow conflict with next_access
+            let keys: Vec<String> = self.entries.keys().cloned().collect();
+            let victim = keys
+                .iter()
                 .map(|k| (k.clone(), self.next_access(k)))
                 .max_by_key(|(_, next)| *next);
 

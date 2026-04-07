@@ -29,28 +29,32 @@ pub type EvalFn = Box<
     ) -> Result<f64, SolverError>,
 >;
 
-/// Default evaluator: optimize → replay → estimated_cost_savings.
-pub fn default_eval(
+/// Train: score + solve → return cached key set.
+fn train_policy(
     config: &ScenarioConfig,
     features: &[ObjectFeatures],
-    events: &[RequestTraceEvent],
     capacity_bytes: u64,
-) -> Result<f64, SolverError> {
+) -> Result<std::collections::HashSet<String>, SolverError> {
     use qc_model::scenario::CapacityConstraint;
 
     let scored = BenefitCalculator::score_all(features, config)?;
     let constraint = CapacityConstraint { capacity_bytes };
     let result = GreedySolver.solve(&scored, &constraint)?;
 
-    let cached_keys: std::collections::HashSet<String> = result
+    Ok(result
         .decisions
         .iter()
         .filter(|d| d.cache)
         .map(|d| d.cache_key.clone())
-        .collect();
+        .collect())
+}
 
-    // Replay: sum origin cost savings + latency value for cache hits
-    let latency_value = config.latency_value_per_ms;
+/// Evaluate a set of cached keys against events (replay proxy).
+fn eval_with_keys(
+    cached_keys: &std::collections::HashSet<String>,
+    events: &[RequestTraceEvent],
+    latency_value: f64,
+) -> f64 {
     let mut savings = 0.0;
     for event in events {
         if event.eligible_for_cache && cached_keys.contains(&event.cache_key) {
@@ -58,8 +62,23 @@ pub fn default_eval(
             savings += event.response_latency_ms.unwrap_or(0.0) * latency_value;
         }
     }
+    savings
+}
 
-    Ok(savings)
+/// Default evaluator: train on given features/events, return score.
+/// For proper train/val separation, use `train_policy` + `eval_with_keys`.
+pub fn default_eval(
+    config: &ScenarioConfig,
+    features: &[ObjectFeatures],
+    events: &[RequestTraceEvent],
+    capacity_bytes: u64,
+) -> Result<f64, SolverError> {
+    let cached_keys = train_policy(config, features, capacity_bytes)?;
+    Ok(eval_with_keys(
+        &cached_keys,
+        events,
+        config.latency_value_per_ms,
+    ))
 }
 
 /// Calibrate scenario config parameters using coordinate descent.
@@ -68,7 +87,7 @@ pub fn default_eval(
 /// Uses time-based train/validation split.
 pub fn calibrate(
     train_features: &[ObjectFeatures],
-    train_events: &[RequestTraceEvent],
+    _train_events: &[RequestTraceEvent],
     val_features: &[ObjectFeatures],
     val_events: &[RequestTraceEvent],
     base_config: &ScenarioConfig,
@@ -105,9 +124,10 @@ pub fn calibrate(
             // Optimize latency_value_per_ms
             for &lat in &latency_range {
                 let config = make_config(capacity, lat, current_pen);
-                // Train to get policy, validate to score
-                let _ = default_eval(&config, train_features, train_events, capacity)?;
-                let val_score = default_eval(&config, val_features, val_events, capacity)?;
+                // Train on training data, evaluate policy on validation data
+                let cached_keys = train_policy(&config, train_features, capacity)?;
+                let val_score =
+                    eval_with_keys(&cached_keys, val_events, config.latency_value_per_ms);
                 total_iters += 1;
 
                 if val_score > best_val_score {
@@ -121,8 +141,9 @@ pub fn calibrate(
             // Optimize stale penalty class
             for &pen in &penalty_range {
                 let config = make_config(capacity, current_lat, pen);
-                let _ = default_eval(&config, train_features, train_events, capacity)?;
-                let val_score = default_eval(&config, val_features, val_events, capacity)?;
+                let cached_keys = train_policy(&config, train_features, capacity)?;
+                let val_score =
+                    eval_with_keys(&cached_keys, val_events, config.latency_value_per_ms);
                 total_iters += 1;
 
                 if val_score > best_val_score {
