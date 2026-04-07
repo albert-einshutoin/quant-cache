@@ -3,10 +3,11 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+use qc_model::compact_trace::CompactTraceEvent;
 use qc_model::policy::{PolicyDecision, PolicyFile};
 use qc_model::scenario::StalePenaltyClass;
-use qc_simulate::baselines::StaticPolicy;
-use qc_simulate::engine::{ReplayEconConfig, TraceReplayEngine};
+use qc_simulate::compact_baselines::CompactStaticPolicy;
+use qc_simulate::engine::{CompactReplayEconConfig, ReplayEconConfig, TraceReplayEngine};
 use qc_simulate::synthetic;
 
 #[derive(Args)]
@@ -55,19 +56,26 @@ pub fn run(args: &SimulateArgs) -> anyhow::Result<()> {
         }
     };
 
-    let cached_keys: Vec<String> = decisions
-        .iter()
-        .filter(|d| d.cache)
-        .map(|d| d.cache_key.clone())
-        .collect();
-
-    // Build per-object econ from trace features
+    // Build per-object econ from trace features (needs original events for aggregation)
     let features = synthetic::aggregate_features(&events, args.time_window);
     let default_class = parse_stale_class(&args.stale_penalty_class)?;
     let econ = ReplayEconConfig::from_features(&features, args.latency_value, default_class);
 
-    let mut policy = StaticPolicy::new(cached_keys);
-    let mut metrics = TraceReplayEngine::replay_with_econ(&events, &mut policy, &econ)?;
+    // Convert to compact representation for memory-efficient replay
+    let (compact_events, mut interner) = CompactTraceEvent::intern_batch(&events);
+    drop(events); // free original String-heavy events
+
+    let compact_econ = CompactReplayEconConfig::from_econ_config(&econ, &mut interner);
+
+    let cached_key_ids: Vec<u32> = decisions
+        .iter()
+        .filter(|d| d.cache)
+        .map(|d| interner.intern(&d.cache_key))
+        .collect();
+
+    let mut policy = CompactStaticPolicy::new(cached_key_ids);
+    let mut metrics =
+        TraceReplayEngine::replay_compact_with_econ(&compact_events, &mut policy, &compact_econ)?;
 
     // Fill solver diagnostics from policy metadata
     if let Some(ref meta) = solver_meta {
