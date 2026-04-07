@@ -277,6 +277,8 @@ pub fn search_qubo<F>(
     scored: &[ScoredObject],
     capacity_bytes: u64,
     eval_fn: F,
+    max_iterations: usize,
+    seed: u64,
 ) -> Result<PolicySearchResult, SolverError>
 where
     F: Fn(&PolicyIR) -> Result<f64, SolverError>,
@@ -321,6 +323,7 @@ where
 
     // Estimate cross-dimension interactions
     let interactions = estimate_interactions(&vars, &ctx, &eval_fn);
+    let interactions_count = interactions.len();
 
     // One-hot constraints: within each dimension, at most 1 variable active.
     // Encode as strong negative pairwise weights for same-dimension pairs.
@@ -338,33 +341,51 @@ where
     }
 
     let problem = QuadraticProblem {
-        objects: linear_terms,
+        objects: linear_terms.clone(),
         interactions: all_interactions,
         capacity_bytes: vars.len() as u64, // no real capacity constraint
     };
 
     let solver = SimulatedAnnealingSolver {
-        max_iterations: 5000,
+        max_iterations,
+        seed,
         ..SimulatedAnnealingSolver::default()
     };
     let result: SolverResult = solver.solve(&problem)?;
 
-    // Decode: build PolicyIR from active variables
-    let mut best_ir = base_ir;
+    // Decode with one-hot enforcement: for each dimension, keep only the
+    // highest-benefit active variable (SA may have activated multiple).
+    let mut best_per_dimension: std::collections::HashMap<&str, (usize, f64)> =
+        std::collections::HashMap::new();
     for (idx, decision) in result.decisions.iter().enumerate() {
         if decision.cache && idx < vars.len() {
-            (vars[idx].apply)(&mut best_ir, &ctx);
+            let dim = vars[idx].dimension;
+            let benefit = linear_terms[idx].net_benefit;
+            let entry = best_per_dimension
+                .entry(dim)
+                .or_insert((idx, f64::NEG_INFINITY));
+            if benefit > entry.1 {
+                *entry = (idx, benefit);
+            }
         }
     }
+
+    let mut best_ir = base_ir;
+    for &(idx, _) in best_per_dimension.values() {
+        (vars[idx].apply)(&mut best_ir, &ctx);
+    }
+
+    // Re-evaluate the decoded IR to get the true objective
     let best_objective = eval_fn(&best_ir).unwrap_or(result.objective_value);
+    let evals = vars.len() + interactions_count + result.decisions.len();
 
     let search_time_ms = start.elapsed().as_millis() as u64;
 
     Ok(PolicySearchResult {
         best_ir,
         best_objective,
-        candidates_evaluated: result.decisions.len(),
+        candidates_evaluated: evals,
         search_time_ms,
-        top_candidates: vec![], // QUBO returns single best
+        top_candidates: vec![],
     })
 }

@@ -139,7 +139,13 @@ pub fn run(args: &PolicySearchArgs) -> anyhow::Result<()> {
     );
     let result = match args.method.as_str() {
         "sa" => policy_search::search_sa(&search_config, &scored, eval_fn)?,
-        "qubo" => qc_solver::policy_qubo::search_qubo(&scored, args.capacity, eval_fn)?,
+        "qubo" => qc_solver::policy_qubo::search_qubo(
+            &scored,
+            args.capacity,
+            eval_fn,
+            args.max_iterations.max(1000),
+            42,
+        )?,
         _ => policy_search::search(&search_config, &scored, eval_fn)?,
     };
 

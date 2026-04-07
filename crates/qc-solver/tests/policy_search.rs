@@ -122,16 +122,18 @@ fn sa_competitive_with_grid() {
 }
 
 #[test]
-#[test]
 fn qubo_dsl_search_produces_valid_result() {
     let (events, features, scored, _, econ) = setup();
     let eval_fn = make_eval_fn(&events, &features, &scored, &econ);
-    let result = qc_solver::policy_qubo::search_qubo(&scored, 500_000, eval_fn).unwrap();
+    let result = qc_solver::policy_qubo::search_qubo(&scored, 500_000, eval_fn, 2000, 42).unwrap();
     assert!(
         result.best_objective.is_finite(),
         "QUBO should produce finite objective"
     );
-    // QUBO should find a policy with at least some positive objective
+    assert!(
+        result.candidates_evaluated > 0,
+        "QUBO should evaluate candidates"
+    );
     eprintln!("QUBO best: {:.4}", result.best_objective);
 }
 
