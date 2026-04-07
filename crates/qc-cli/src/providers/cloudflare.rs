@@ -32,9 +32,11 @@ impl ProviderLogParser for CloudflareParser {
         const MAX_LINE_BYTES: usize = 64 * 1024;
         let mut buf = Vec::with_capacity(4096);
         let mut reader = reader;
+        let mut line_num = 0usize;
 
         loop {
             buf.clear();
+            line_num += 1;
             let bytes_read = (&mut reader)
                 .take((MAX_LINE_BYTES + 1) as u64)
                 .read_until(b'\n', &mut buf)?;
@@ -42,7 +44,11 @@ impl ProviderLogParser for CloudflareParser {
                 break;
             }
             if buf.len() > MAX_LINE_BYTES && !buf.ends_with(b"\n") {
-                tracing::warn!("skipping oversized line (>{MAX_LINE_BYTES} bytes)");
+                tracing::warn!(
+                    "{}:{}: skipping oversized line (>{MAX_LINE_BYTES} bytes)",
+                    path.display(),
+                    line_num
+                );
                 loop {
                     buf.clear();
                     let n = (&mut reader)
@@ -56,7 +62,10 @@ impl ProviderLogParser for CloudflareParser {
             }
             let line = match std::str::from_utf8(&buf) {
                 Ok(s) => s.trim(),
-                Err(_) => continue,
+                Err(_) => {
+                    tracing::warn!("{}:{}: skipping non-UTF-8 line", path.display(), line_num);
+                    continue;
+                }
             };
             if line.is_empty() {
                 continue;
@@ -66,7 +75,11 @@ impl ProviderLogParser for CloudflareParser {
                 Ok(Some(e)) => events.push(e),
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::warn!("skipping malformed line: {e}");
+                    tracing::warn!(
+                        "{}:{}: skipping malformed line: {e}",
+                        path.display(),
+                        line_num
+                    );
                 }
             }
         }
@@ -123,13 +136,14 @@ fn parse_cloudflare_line(
 
     let eligible = status_code != 206 && (200..400).contains(&status_code);
 
-    // Origin response time (seconds)
-    let origin_time_ms = v["OriginResponseTime"]
-        .as_f64()
-        .or_else(|| v["OriginResponseHTTPExpires"].as_f64())
-        .unwrap_or(0.0);
-    let latency_ms = if origin_time_ms.is_finite() && (0.0..=3600000.0).contains(&origin_time_ms) {
-        origin_time_ms
+    // OriginResponseTime: nanoseconds in Cloudflare Logpush v2 → convert to ms
+    let origin_time_ns = v["OriginResponseTime"]
+        .as_u64()
+        .or_else(|| v["OriginResponseTime"].as_f64().map(|f| f as u64))
+        .unwrap_or(0);
+    let latency_ms = origin_time_ns as f64 / 1_000_000.0;
+    let latency_ms = if latency_ms.is_finite() && (0.0..=3600000.0).contains(&latency_ms) {
+        latency_ms
     } else {
         0.0
     };

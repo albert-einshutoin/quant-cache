@@ -88,7 +88,7 @@ pub fn default_eval(
 pub fn calibrate(
     train_features: &[ObjectFeatures],
     _train_events: &[RequestTraceEvent],
-    val_features: &[ObjectFeatures],
+    _val_features: &[ObjectFeatures],
     val_events: &[RequestTraceEvent],
     base_config: &ScenarioConfig,
     num_restarts: usize,
@@ -166,7 +166,9 @@ pub fn calibrate(
             _ => StalePenaltyClass::Medium,
         };
         let config = make_config(capacity, lat, pen);
-        let score = default_eval(&config, val_features, val_events, capacity)?;
+        // Train on training data, evaluate on validation data (consistent with main loop)
+        let cached_keys = train_policy(&config, train_features, capacity)?;
+        let score = eval_with_keys(&cached_keys, val_events, config.latency_value_per_ms);
         sensitivity.push(("latency_value_per_ms".into(), lat, score - base_score));
     }
 

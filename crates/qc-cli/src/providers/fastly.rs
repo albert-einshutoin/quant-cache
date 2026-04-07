@@ -38,8 +38,11 @@ impl ProviderLogParser for FastlyParser {
         let mut buf = Vec::with_capacity(4096);
         let mut reader = reader;
 
+        let mut line_num = 0usize;
+
         loop {
             buf.clear();
+            line_num += 1;
             let bytes_read = (&mut reader)
                 .take((MAX_LINE_BYTES + 1) as u64)
                 .read_until(b'\n', &mut buf)?;
@@ -47,7 +50,11 @@ impl ProviderLogParser for FastlyParser {
                 break;
             }
             if buf.len() > MAX_LINE_BYTES && !buf.ends_with(b"\n") {
-                tracing::warn!("skipping oversized line (>{MAX_LINE_BYTES} bytes)");
+                tracing::warn!(
+                    "{}:{}: skipping oversized line (>{MAX_LINE_BYTES} bytes)",
+                    path.display(),
+                    line_num
+                );
                 loop {
                     buf.clear();
                     let n = (&mut reader)
@@ -61,7 +68,10 @@ impl ProviderLogParser for FastlyParser {
             }
             let line = match std::str::from_utf8(&buf) {
                 Ok(s) => s.trim(),
-                Err(_) => continue,
+                Err(_) => {
+                    tracing::warn!("{}:{}: skipping non-UTF-8 line", path.display(), line_num);
+                    continue;
+                }
             };
             if line.is_empty() {
                 continue;
@@ -71,7 +81,11 @@ impl ProviderLogParser for FastlyParser {
                 Ok(Some(e)) => events.push(e),
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::warn!("skipping malformed line: {e}");
+                    tracing::warn!(
+                        "{}:{}: skipping malformed line: {e}",
+                        path.display(),
+                        line_num
+                    );
                 }
             }
         }
@@ -111,7 +125,8 @@ fn parse_fastly_line(
 
     // URL: may be full request line "GET /path HTTP/1.1" or just "/path"
     let raw_url = v["url"].as_str().unwrap_or("/");
-    let uri = if raw_url.starts_with("GET ") || raw_url.starts_with("POST ") {
+    let uri = if raw_url.contains(' ') {
+        // Request line: "METHOD /path HTTP/version" — extract path component
         raw_url.split_whitespace().nth(1).unwrap_or("/").to_string()
     } else {
         raw_url.to_string()
