@@ -10,7 +10,16 @@ use commands::{
 
 #[derive(Parser)]
 #[command(name = "qc")]
-#[command(about = "quant-cache: Economic cache control plane")]
+#[command(
+    about = "quant-cache: Economic cache decision framework for CDN operators\n\n\
+    Evaluate cache policies through economic objectives ($/period),\n\
+    search the policy design space, and generate vendor-native configs.\n\n\
+    Quick start:\n  \
+    qc generate -o trace.csv\n  \
+    qc optimize -i trace.csv -o policy.json\n  \
+    qc compare -i trace.csv\n  \
+    qc compile -p policy_ir.json --target cloudflare"
+)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -19,27 +28,31 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import CDN provider logs into canonical trace format
+    /// Import CDN provider logs into canonical trace CSV
+    ///
+    /// Supported providers: cloudfront, cloudflare, fastly
     Import(import::ImportArgs),
-    /// Generate synthetic trace data
+    /// Generate synthetic trace data with configurable distributions
     Generate(generate::GenerateArgs),
-    /// Optimize cache policy from trace data
+    /// Optimize cache policy from trace data (greedy/ILP/SA solver)
     Optimize(optimize::OptimizeArgs),
-    /// Evaluate PolicyIR configurations against a trace
+    /// Evaluate a PolicyIR configuration against a trace
     PolicyEval(policy_eval::PolicyEvalArgs),
-    /// Search for the best PolicyIR configuration
+    /// Search for the best PolicyIR configuration (grid/SA/QUBO)
     PolicySearch(policy_search::PolicySearchArgs),
-    /// Replay trace and measure metrics
+    /// Replay a trace through EconomicGreedy and measure metrics
     Simulate(simulate::SimulateArgs),
-    /// Compare baseline policies side-by-side
+    /// Compare baseline policies (LRU, GDSF, SIEVE, S3-FIFO, Belady)
     Compare(compare::CompareArgs),
-    /// Calibrate economic parameters using train/validation traces
+    /// Calibrate latency_value and stale_penalty via coordinate descent
     Calibrate(calibrate::CalibrateArgs),
-    /// Generate deployment scaffold from PolicyIR (Cloudflare/CloudFront/Fastly)
+    /// Generate deployment config from PolicyIR for a CDN provider
+    ///
+    /// Targets: cloudflare, cloudfront, fastly, akamai
     Compile(compile::CompileArgs),
     /// Pre-deploy safety check: replay PolicyIR and verify thresholds
     DeployCheck(deploy_check::DeployCheckArgs),
-    /// Compare compiled output across all CDN providers
+    /// Compare compiled output across all 4 CDN providers
     CompileCompare(compile_compare::CompileCompareArgs),
 }
 

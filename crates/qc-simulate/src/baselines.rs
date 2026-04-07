@@ -141,6 +141,11 @@ impl LruPolicy {
         self
     }
 
+    /// Current bytes used in cache. For testing capacity invariants.
+    pub fn used_bytes(&self) -> u64 {
+        self.used_bytes
+    }
+
     fn touch(&mut self, key: &str) {
         if let Some(entry) = self.entries.get_mut(key) {
             self.order.remove(&entry.generation);

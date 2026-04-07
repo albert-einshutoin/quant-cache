@@ -1,4 +1,6 @@
+pub mod cloudflare;
 pub mod cloudfront;
+pub mod fastly;
 
 use qc_model::origin_cost::OriginCostConfig;
 use qc_model::trace::RequestTraceEvent;

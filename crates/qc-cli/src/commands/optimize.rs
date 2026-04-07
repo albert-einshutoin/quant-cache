@@ -11,23 +11,23 @@ use qc_solver::solver::Solver;
 
 #[derive(Args)]
 pub struct OptimizeArgs {
-    /// Input trace CSV file
+    /// Input trace CSV file (from `qc generate` or `qc import`)
     #[arg(short, long)]
     pub input: PathBuf,
 
-    /// Output policy JSON file
+    /// Output policy JSON file with cache decisions and scores
     #[arg(short, long, default_value = "policy.json")]
     pub output: PathBuf,
 
-    /// Cache capacity in bytes
+    /// Cache capacity in bytes [default: 10GB]
     #[arg(long, default_value_t = 10_737_418_240)]
     pub capacity: u64,
 
-    /// Time window in seconds
+    /// Time window in seconds for feature aggregation [default: 1 day]
     #[arg(long, default_value_t = 86400)]
     pub time_window: u64,
 
-    /// Preset profile: ecommerce, media, api
+    /// Preset profile with tuned defaults: ecommerce, media, api
     #[arg(long)]
     pub preset: Option<String>,
 
@@ -290,11 +290,22 @@ pub(crate) fn load_config(args: &OptimizeArgs) -> anyhow::Result<ScenarioConfig>
 pub(crate) fn read_trace_csv(
     path: &std::path::Path,
 ) -> anyhow::Result<Vec<qc_model::trace::RequestTraceEvent>> {
-    let mut rdr = csv::ReaderBuilder::new().from_path(path)?;
+    use anyhow::Context;
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .from_path(path)
+        .with_context(|| format!("failed to open trace CSV: {}", path.display()))?;
     let mut events = Vec::new();
-    for result in rdr.deserialize() {
-        let event: qc_model::trace::RequestTraceEvent = result?;
+    for (i, result) in rdr.deserialize().enumerate() {
+        let event: qc_model::trace::RequestTraceEvent = result
+            .with_context(|| format!("failed to parse row {} in {}", i + 1, path.display()))?;
         events.push(event);
+    }
+    if events.is_empty() {
+        anyhow::bail!(
+            "trace file {} contains no events. Generate one with: qc generate -o trace.csv",
+            path.display()
+        );
     }
     Ok(events)
 }

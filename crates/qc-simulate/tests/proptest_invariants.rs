@@ -57,7 +57,7 @@ proptest! {
             "byte_hit_ratio {} out of [0,1]", metrics.byte_hit_ratio);
     }
 
-    /// R5: capacity_utilization (implicit: LRU never exceeds capacity).
+    /// R5: LRU never exceeds capacity constraint.
     #[test]
     fn lru_never_exceeds_capacity(
         events in prop::collection::vec(arb_trace_event(), 1..200),
@@ -66,10 +66,9 @@ proptest! {
         let mut policy = LruPolicy::new(cap);
         for event in &events {
             policy.on_request(event);
+            prop_assert!(policy.used_bytes() <= cap,
+                "LRU used {} > capacity {} after processing {}",
+                policy.used_bytes(), cap, event.cache_key);
         }
-        // We can't directly inspect used_bytes, but replay should not panic
-        // and metrics should be consistent.
-        let metrics = TraceReplayEngine::replay(&events, &mut LruPolicy::new(cap)).unwrap();
-        prop_assert!(metrics.hit_ratio >= 0.0 && metrics.hit_ratio <= 1.0);
     }
 }

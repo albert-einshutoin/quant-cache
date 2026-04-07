@@ -5,12 +5,14 @@ use clap::Args;
 
 use qc_model::origin_cost::OriginCostConfig;
 
+use crate::providers::cloudflare::CloudflareParser;
 use crate::providers::cloudfront::CloudFrontParser;
+use crate::providers::fastly::FastlyParser;
 use crate::providers::ProviderLogParser;
 
 #[derive(Args)]
 pub struct ImportArgs {
-    /// CDN provider: cloudfront
+    /// CDN provider: cloudfront, cloudflare, fastly
     #[arg(short, long)]
     pub provider: String,
 
@@ -37,7 +39,11 @@ pub fn run(args: &ImportArgs) -> anyhow::Result<()> {
 
     let parser: Box<dyn ProviderLogParser> = match args.provider.as_str() {
         "cloudfront" => Box::new(CloudFrontParser),
-        other => anyhow::bail!("unsupported provider: {other}. Supported: cloudfront"),
+        "cloudflare" => Box::new(CloudflareParser),
+        "fastly" => Box::new(FastlyParser),
+        other => anyhow::bail!(
+            "unsupported provider: {other}. Supported: cloudfront, cloudflare, fastly"
+        ),
     };
 
     tracing::info!(provider = parser.name(), "importing logs");
