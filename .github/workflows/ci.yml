@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,9 +31,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Unit & integration tests
+      - name: Unit & integration tests (smoke tier)
         run: cargo test --workspace
-      - name: Acceptance & performance tests
+      - name: Acceptance, performance & parametric validation (full tier)
         run: cargo test --release --workspace -- --ignored
 
   bench-compile:
