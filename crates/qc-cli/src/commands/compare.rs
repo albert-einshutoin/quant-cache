@@ -131,9 +131,42 @@ pub fn run(args: &CompareArgs) -> anyhow::Result<()> {
         })
         .collect();
 
-    // Admission threshold: 0 = admit all objects with positive efficiency.
-    // TODO: V2.5 — threshold calibration via validation trace.
-    let threshold = 0.0;
+    // V2.5: calibrate admission threshold by sweeping percentiles of the
+    // efficiency distribution and picking the threshold that maximizes
+    // EconSieve replay objective on this trace.
+    let threshold = {
+        let mut efficiencies: Vec<f64> = admission_scores.values().copied().collect();
+        efficiencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let candidates: Vec<f64> = [0.0, 0.10, 0.25, 0.50, 0.75]
+            .iter()
+            .map(|&pct| {
+                if efficiencies.is_empty() {
+                    0.0
+                } else {
+                    let idx =
+                        ((efficiencies.len() as f64 * pct) as usize).min(efficiencies.len() - 1);
+                    efficiencies[idx]
+                }
+            })
+            .collect();
+
+        let mut best_threshold = 0.0;
+        let mut best_obj = f64::NEG_INFINITY;
+        for &t in &candidates {
+            let mut probe = EconSievePolicy::new(admission_scores.clone(), config.capacity_bytes)
+                .with_threshold(t);
+            if let Ok(m) =
+                qc_simulate::engine::TraceReplayEngine::replay_with_econ(&events, &mut probe, &econ)
+            {
+                if m.policy_objective_value > best_obj {
+                    best_obj = m.policy_objective_value;
+                    best_threshold = t;
+                }
+            }
+        }
+        tracing::info!(threshold = best_threshold, "calibrated admission threshold");
+        best_threshold
+    };
 
     let mut lru = LruPolicy::new(config.capacity_bytes);
     let mut gdsf = GdsfPolicy::new(config.capacity_bytes);
