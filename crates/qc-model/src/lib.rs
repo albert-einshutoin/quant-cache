@@ -4,7 +4,9 @@
 //! trace events, object features, scoring results, scenario configs, policy decisions,
 //! and the PolicyIR intermediate representation for deployment compilation.
 
+pub mod compact_trace;
 pub mod error;
+pub mod intern;
 pub mod metrics;
 pub mod object;
 pub mod origin_cost;
