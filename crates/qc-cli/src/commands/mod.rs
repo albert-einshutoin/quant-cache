@@ -6,6 +6,7 @@ pub mod deploy_check;
 pub mod generate;
 pub mod import;
 pub mod optimize;
+pub mod pipeline;
 pub mod policy_eval;
 pub mod policy_search;
 pub mod simulate;

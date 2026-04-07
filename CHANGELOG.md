@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-08
+
+Phase F complete: compact trace representation + Phase G: operationalization.
+
+### Added
+- **CompactTraceEvent** — per-event memory reduced from ~200B to 64B via u32 string interning
+- **StringInterner** — deduplicate repeated strings (cache_key, object_id, etc.) at parse time
+- **CompactCachePolicy trait** — u32-keyed replay for LRU, SIEVE, StaticPolicy, Belady
+- **`qc pipeline` command** — full import → optimize → search → compile → deploy-check in one command. Diff-aware: skips compile if policy unchanged.
+- **Performance benchmarks** — compact LRU replay 2.2x faster than string (72ms vs 160ms on 1M events)
+- **5 parity tests** verifying string vs compact replay produce identical metrics
+- **Output format documentation** (docs/output-formats.md) — stable JSON/CSV schemas
+- **Cloudflare + Fastly log parsers** with bounded reads and line-level diagnostics
+- **V2.5 admission threshold calibration** — automatic percentile sweep in compare command
+
+### Changed
+- simulate command uses compact replay path (drops original events after interning)
+- Workspace version bumped to 0.3.0 with crates.io metadata (keywords, categories)
+
 ## [0.2.0] - 2026-04-07
 
 Phase E complete: parametric validation, quantum-inspired policy search, multi-vendor deployment.

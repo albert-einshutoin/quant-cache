@@ -5,7 +5,7 @@ mod providers;
 
 use commands::{
     calibrate, compare, compile, compile_compare, deploy_check, generate, import, optimize,
-    policy_eval, policy_search, simulate,
+    pipeline, policy_eval, policy_search, simulate,
 };
 
 #[derive(Parser)]
@@ -54,6 +54,11 @@ enum Commands {
     DeployCheck(deploy_check::DeployCheckArgs),
     /// Compare compiled output across all 4 CDN providers
     CompileCompare(compile_compare::CompileCompareArgs),
+    /// Run full pipeline: import → optimize → search → compile → deploy-check
+    ///
+    /// Designed for cron/Lambda periodic re-optimization. Diff-aware: skips
+    /// compile if policy is unchanged from previous run.
+    Pipeline(pipeline::PipelineArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -78,5 +83,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Compile(args) => compile::run(args),
         Commands::DeployCheck(args) => deploy_check::run(args),
         Commands::CompileCompare(args) => compile_compare::run(args),
+        Commands::Pipeline(args) => pipeline::run(args),
     }
 }
