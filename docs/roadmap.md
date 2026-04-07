@@ -1,8 +1,8 @@
 # quant-cache Roadmap
 
-**Version:** 2.0
-**Date:** 2026-04-02
-**Status:** Revised — Economic Cache Control Plane direction
+**Version:** 3.0
+**Date:** 2026-04-07
+**Status:** Phase A-E complete (v0.2.0). Next: performance foundation → operationalization → integration.
 
 ---
 
@@ -12,6 +12,8 @@ quant-cache evolves from an evaluation framework into an **economic cache contro
 - Evaluate cache policies through explicit economic objectives
 - Search the policy design space using quantum-inspired optimization (design-time only)
 - Generate vendor-native cache configurations for deployment
+- **Process production-scale traces (1B+ events) with bounded memory** (Phase F)
+- **Run continuously in operational pipelines** (Phase G)
 
 ## Phase Overview
 
@@ -356,16 +358,97 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase F — Production Replay (Optional)
+## Phase F — Performance Foundation (v0.3.0)
 
-**Goal:** Validate on real CDN logs for those with production environments.
+**Goal:** Enable 1B+ event processing with bounded memory.
 
-This is not a gate for project completion. It is an optional demonstration that
-the framework produces meaningful results on real traffic patterns.
+> Strategy: "Deepen before widening." Width (CDN targets, features) is sufficient.
+> Depth (throughput, memory, operability) is the current bottleneck.
+> See [history/2026-04-07-next-phase-discussion.md](history/2026-04-07-next-phase-discussion.md).
 
-- End-to-end: real CloudFront trace → policy-search → compile → deploy → measure
+### Deliverables
+
+| Item | Description |
+|------|-------------|
+| CompactTraceEvent | Replace per-event String fields with u32 key IDs (~200B → ~24B per event) |
+| String intern table | Deduplicate cache_key/object_id/content_type at parse time |
+| Streaming replay API | `impl Iterator<Item = CompactTraceEvent>` for TraceReplayEngine |
+| Performance benchmarks | events/sec, peak RSS measurement suite |
+| Memory regression CI | Track peak RSS in CI, fail on >20% regression |
+
+### Non-goals
+
+- Changing the CachePolicy trait (keeps `&RequestTraceEvent` for baselines)
+- Multi-threaded replay (policies are stateful, inherently sequential)
+
+### Success criteria
+
+- 10M event trace processes in <10s with <1GB RSS
+- 100M event trace completes without OOM on 8GB machine
+- All existing tests pass with CompactTraceEvent path
+
+---
+
+## Phase G — Operationalization (v0.4.0)
+
+**Goal:** Run quant-cache continuously in production pipelines + publish to crates.io.
+
+### Deliverables
+
+| Item | Description |
+|------|-------------|
+| Periodic re-optimization | CLI pipeline: ingest → aggregate → score → diff → conditional compile |
+| Output contract stabilization | JSON/CSV output schemas documented and version-stamped |
+| Public API freeze | Scorer trait, SolverResult, PolicyIR surface locked with semver |
+| crates.io publication | qc-model, qc-solver, qc-simulate published as separate crates |
+| Operational guide | "From your logs to optimized config in 5 steps" end-to-end documentation |
+
+### Success criteria
+
+- `crontab` or Lambda-based pipeline example that re-optimizes weekly
+- Published on crates.io with passing CI badge
+- Breaking API changes trigger major version bump
+
+---
+
+## Phase H — Integration (v0.5.0)
+
+**Goal:** Expose qc-solver as a C library for Nginx/Envoy module integration.
+
+### Deliverables
+
+| Item | Description |
+|------|-------------|
+| C API / FFI | `libqc_solver.so` with C header for score + solve functions |
+| cbindgen header | Auto-generated C header from Rust types |
+| Python bindings | PyO3 wrapper for `BenefitCalculator` and `GreedySolver` |
+| Integration example | Nginx module stub that calls qc-solver for admission decisions |
+
+### Prerequisites
+
+- Phase F (CompactTraceEvent) settled — FFI freezes internal representations
+- Phase G (API freeze) — external bindings need stable signatures
+
+---
+
+## Production Replay (Optional, any time)
+
+Validate on real CDN logs for those with production environments.
+Not a phase gate — run whenever real data is available.
+
+- End-to-end: real trace → policy-search → compile → deploy → measure
 - Before/after cost comparison on production traffic
 - Document results as a case study
+
+---
+
+## Cut / Deferred Items
+
+| Item | Decision | Rationale |
+|------|----------|-----------|
+| Additional CDN targets (Lambda@Edge, Varnish) | Deferred | 4 CDN sufficient; depth > width |
+| v1.0.0 | Deferred | Requires stable API (post-Phase G) + proven production scale (post-Phase F) |
+| Publication as main phase | Cut | Write alongside releases, not as dedicated phase |
 
 ---
 
@@ -377,10 +460,12 @@ the framework produces meaningful results on real traffic patterns.
 | 2026-04-05 | 5-agent review → P0-P3 remediation cycle | Architecture/Rust/Security/Test/Codex review identified CRITICAL/HIGH issues in baselines, compile, scoring |
 | 2026-04-06 | Gitflow adoption (develop/main) | Growing commit volume needs structured branching for review cycles |
 | 2026-04-06 | Phase E goal revised: "real deploy validation" → "parametric validation suite" | N=1 production trace is unfalsifiable; parametric sweep covers 2,880+ scenarios systematically |
-| 2026-04-06 | Production replay demoted to optional Phase F | Individual-scale production traffic is statistically thin; parametric tests are more rigorous |
+| 2026-04-06 | Production replay demoted to optional | Individual-scale production traffic is statistically thin; parametric tests are more rigorous |
 | 2026-04-06 | Scorer trait introduced (V1Scorer/V2Scorer) | Enables clean extension for future scoring versions without modifying BenefitCalculator |
 | 2026-04-06 | SolverResult/QuadraticResult unified | Eliminates 5-tuple destructuring in CLI; single result type for all solvers |
 | 2026-04-06 | O(n²) algorithms capped | reuse_distance (100K gap), co_access (50M pairs), group_interactions (sqrt pre-selection) |
+| 2026-04-07 | Phase F/G/H planned with Codex | "横に広げる前に深く実用化する": throughput → operation → integration. Additional CDN targets deferred. v1.0.0 deferred until API stable + production-scale proven |
+| 2026-04-07 | V2.5 threshold calibration implemented | compare command now auto-calibrates admission threshold by sweeping efficiency percentiles |
 
 ---
 
@@ -393,3 +478,5 @@ the framework produces meaningful results on real traffic patterns.
 | C | "Quantum-Inspired Policy Search for CDN Caching" | SA/QUBO over DSL |
 | D | "From Trace to Cloudflare Rules: Automated Cache Configuration" | Vendor compiler |
 | E | "2,880 Scenarios: Parametric Validation for Cache Economics" | Validation methodology |
+| F | "Scaling Cache Economics to 1B Events" | CompactTraceEvent + streaming |
+| G | "Automated Cache Configuration Pipeline" | Continuous operation flow |
