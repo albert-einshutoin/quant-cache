@@ -335,8 +335,10 @@ where
     let prewarm_counts = [0usize, 5, 10, 20];
     let median_size = sizes.get(sizes.len() / 2).copied().unwrap_or(1).max(1);
 
-    // Initial state: simple SIEVE with no rules
-    let mut current = PolicyIR {
+    let num_restarts = 3;
+    let iters_per_restart = config.max_iterations / num_restarts.max(1);
+
+    let mut best = PolicyIR {
         backend: Backend::Sieve,
         capacity_bytes: config.capacity_bytes,
         admission_rule: AdmissionRule::Always,
@@ -345,169 +347,194 @@ where
         ttl_class_rules: vec![],
         cache_key_rules: vec![],
     };
+    let mut best_obj = f64::NEG_INFINITY;
+    let mut all_results: Vec<(PolicyIR, f64)> = Vec::new();
+    let mut evaluated = 0;
 
-    let mut current_obj = eval_fn(&current).unwrap_or(f64::NEG_INFINITY);
-    let mut best = current.clone();
-    let mut best_obj = current_obj;
+    let initial_backends = [Backend::Sieve, Backend::S3Fifo, Backend::Sieve];
+    let initial_admissions = [
+        AdmissionRule::Always,
+        AdmissionRule::ScoreThreshold {
+            threshold: score_percentiles.get(2).copied().unwrap_or(0.0),
+        },
+        AdmissionRule::ScoreDensityThreshold {
+            threshold: score_percentiles.get(3).copied().unwrap_or(0.0) / median_size as f64,
+        },
+    ];
 
-    let mut all_results: Vec<(PolicyIR, f64)> = vec![(current.clone(), current_obj)];
-    let mut evaluated = 1;
+    for restart in 0..num_restarts {
+        let mut current = PolicyIR {
+            backend: initial_backends[restart % initial_backends.len()],
+            capacity_bytes: config.capacity_bytes,
+            admission_rule: initial_admissions[restart % initial_admissions.len()].clone(),
+            bypass_rule: BypassRule::None,
+            prewarm_set: vec![],
+            ttl_class_rules: vec![],
+            cache_key_rules: vec![],
+        };
 
-    let initial_temp = 10.0;
-    let cooling_rate = (1.0 - (3.0 / config.max_iterations.max(10) as f64)).max(0.9);
-    let mut temp = initial_temp;
+        let mut current_obj = eval_fn(&current).unwrap_or(f64::NEG_INFINITY);
+        all_results.push((current.clone(), current_obj));
+        evaluated += 1;
 
-    for _ in 0..config.max_iterations {
-        // Mutate one random dimension
-        let mut candidate = current.clone();
-        let dimension = rng.gen_range(0..7);
+        if current_obj > best_obj {
+            best = current.clone();
+            best_obj = current_obj;
+        }
 
-        match dimension {
-            0 => {
-                // Backend
-                candidate.backend = if candidate.backend == Backend::Sieve {
-                    Backend::S3Fifo
-                } else {
-                    Backend::Sieve
-                };
-            }
-            1 => {
-                // Admission rule
-                let variants = [0, 1, 2];
-                match variants[rng.gen_range(0..3)] {
-                    0 => candidate.admission_rule = AdmissionRule::Always,
-                    1 => {
-                        let t = score_percentiles[rng.gen_range(0..score_percentiles.len())];
-                        candidate.admission_rule = AdmissionRule::ScoreThreshold { threshold: t };
-                    }
-                    _ => {
-                        let t = score_percentiles[rng.gen_range(0..score_percentiles.len())]
-                            / median_size as f64;
-                        candidate.admission_rule =
-                            AdmissionRule::ScoreDensityThreshold { threshold: t };
+        let initial_temp = 10.0;
+        let cooling_rate = (1.0 - (3.0 / iters_per_restart.max(10) as f64)).max(0.9);
+        let mut temp = initial_temp;
+
+        for _ in 0..iters_per_restart {
+            // Mutate one random dimension (6 dimensions, capacity excluded)
+            let mut candidate = current.clone();
+            let dimension = rng.gen_range(0..6);
+
+            match dimension {
+                0 => {
+                    // Backend
+                    candidate.backend = if candidate.backend == Backend::Sieve {
+                        Backend::S3Fifo
+                    } else {
+                        Backend::Sieve
+                    };
+                }
+                1 => {
+                    // Admission rule
+                    let variants = [0, 1, 2];
+                    match variants[rng.gen_range(0..3)] {
+                        0 => candidate.admission_rule = AdmissionRule::Always,
+                        1 => {
+                            let t = score_percentiles[rng.gen_range(0..score_percentiles.len())];
+                            candidate.admission_rule =
+                                AdmissionRule::ScoreThreshold { threshold: t };
+                        }
+                        _ => {
+                            let t = score_percentiles[rng.gen_range(0..score_percentiles.len())]
+                                / median_size as f64;
+                            candidate.admission_rule =
+                                AdmissionRule::ScoreDensityThreshold { threshold: t };
+                        }
                     }
                 }
-            }
-            2 => {
-                // Bypass rule
-                match rng.gen_range(0..4) {
-                    0 => candidate.bypass_rule = BypassRule::None,
-                    1 => {
-                        let sz = size_percentiles[rng.gen_range(0..size_percentiles.len())];
-                        candidate.bypass_rule = if sz == 0 {
-                            BypassRule::None
-                        } else {
-                            BypassRule::SizeLimit { max_bytes: sz }
-                        };
-                    }
-                    2 => {
-                        let ft = [1.0, 0.5, 0.3][rng.gen_range(0..3)];
-                        candidate.bypass_rule = if ft >= 1.0 {
-                            BypassRule::None
-                        } else {
-                            BypassRule::FreshnessRisk { threshold: ft }
-                        };
-                    }
-                    _ => {
-                        let sz = size_percentiles[rng.gen_range(1..size_percentiles.len()).max(1)];
-                        let ft = [0.5, 0.3][rng.gen_range(0..2)];
-                        candidate.bypass_rule = BypassRule::Any {
-                            rules: vec![
-                                BypassRule::SizeLimit {
-                                    max_bytes: sz.max(1),
-                                },
-                                BypassRule::FreshnessRisk { threshold: ft },
-                            ],
-                        };
+                2 => {
+                    // Bypass rule
+                    match rng.gen_range(0..4) {
+                        0 => candidate.bypass_rule = BypassRule::None,
+                        1 => {
+                            let sz = size_percentiles[rng.gen_range(0..size_percentiles.len())];
+                            candidate.bypass_rule = if sz == 0 {
+                                BypassRule::None
+                            } else {
+                                BypassRule::SizeLimit { max_bytes: sz }
+                            };
+                        }
+                        2 => {
+                            let ft = [1.0, 0.5, 0.3][rng.gen_range(0..3)];
+                            candidate.bypass_rule = if ft >= 1.0 {
+                                BypassRule::None
+                            } else {
+                                BypassRule::FreshnessRisk { threshold: ft }
+                            };
+                        }
+                        _ => {
+                            let sz =
+                                size_percentiles[rng.gen_range(1..size_percentiles.len()).max(1)];
+                            let ft = [0.5, 0.3][rng.gen_range(0..2)];
+                            candidate.bypass_rule = BypassRule::Any {
+                                rules: vec![
+                                    BypassRule::SizeLimit {
+                                        max_bytes: sz.max(1),
+                                    },
+                                    BypassRule::FreshnessRisk { threshold: ft },
+                                ],
+                            };
+                        }
                     }
                 }
-            }
-            3 => {
-                // Prewarm
-                let pw = prewarm_counts[rng.gen_range(0..prewarm_counts.len())];
-                if pw > 0 {
-                    let mut by_score: Vec<&ScoredObject> = scored.iter().collect();
-                    by_score.sort_by(|a, b| {
-                        b.net_benefit
-                            .partial_cmp(&a.net_benefit)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    candidate.prewarm_set = by_score
-                        .iter()
-                        .take(pw)
-                        .map(|s| s.cache_key.clone())
-                        .collect();
-                } else {
-                    candidate.prewarm_set = vec![];
+                3 => {
+                    // Prewarm
+                    let pw = prewarm_counts[rng.gen_range(0..prewarm_counts.len())];
+                    if pw > 0 {
+                        let mut by_score: Vec<&ScoredObject> = scored.iter().collect();
+                        by_score.sort_by(|a, b| {
+                            b.net_benefit
+                                .partial_cmp(&a.net_benefit)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        candidate.prewarm_set = by_score
+                            .iter()
+                            .take(pw)
+                            .map(|s| s.cache_key.clone())
+                            .collect();
+                    } else {
+                        candidate.prewarm_set = vec![];
+                    }
                 }
-            }
-            4 => {
-                // TTL class rules
-                if !ct_prefixes.is_empty() && rng.gen_bool(0.6) {
-                    candidate.ttl_class_rules = ct_prefixes
-                        .iter()
-                        .map(|p| TtlClassRule {
-                            content_type_pattern: p.clone(),
-                            ttl_seconds: ttl_options[rng.gen_range(0..ttl_options.len())],
-                        })
-                        .collect();
-                } else {
-                    candidate.ttl_class_rules = vec![];
+                4 => {
+                    // TTL class rules
+                    if !ct_prefixes.is_empty() && rng.gen_bool(0.6) {
+                        candidate.ttl_class_rules = ct_prefixes
+                            .iter()
+                            .map(|p| TtlClassRule {
+                                content_type_pattern: p.clone(),
+                                ttl_seconds: ttl_options[rng.gen_range(0..ttl_options.len())],
+                            })
+                            .collect();
+                    } else {
+                        candidate.ttl_class_rules = vec![];
+                    }
                 }
-            }
-            5 => {
-                // Cache key rules
-                let key_options: Vec<Vec<CacheKeyRule>> = vec![
-                    vec![],
-                    vec![CacheKeyRule {
-                        pattern: r"[?&]utm_[^&]*".into(),
-                        replacement: "".into(),
-                    }],
-                    vec![
-                        CacheKeyRule {
+                _ => {
+                    // Cache key rules
+                    let key_options: Vec<Vec<CacheKeyRule>> = vec![
+                        vec![],
+                        vec![CacheKeyRule {
                             pattern: r"[?&]utm_[^&]*".into(),
                             replacement: "".into(),
-                        },
-                        CacheKeyRule {
-                            pattern: r"[?&]fbclid=[^&]*".into(),
-                            replacement: "".into(),
-                        },
-                    ],
-                ];
-                candidate.cache_key_rules =
-                    key_options[rng.gen_range(0..key_options.len())].clone();
-            }
-            _ => {
-                // Capacity (small perturbation)
-                let factor = [0.8, 0.9, 1.0, 1.1, 1.2][rng.gen_range(0..5)];
-                candidate.capacity_bytes = (config.capacity_bytes as f64 * factor) as u64;
-            }
-        }
-
-        // Evaluate candidate
-        if let Ok(obj) = eval_fn(&candidate) {
-            let delta = obj - current_obj;
-            let accept = if delta > 0.0 {
-                true
-            } else {
-                temp > 0.0 && rng.gen::<f64>() < (delta / temp).exp()
-            };
-
-            if accept {
-                current = candidate.clone();
-                current_obj = obj;
-
-                if obj > best_obj {
-                    best = candidate.clone();
-                    best_obj = obj;
+                        }],
+                        vec![
+                            CacheKeyRule {
+                                pattern: r"[?&]utm_[^&]*".into(),
+                                replacement: "".into(),
+                            },
+                            CacheKeyRule {
+                                pattern: r"[?&]fbclid=[^&]*".into(),
+                                replacement: "".into(),
+                            },
+                        ],
+                    ];
+                    candidate.cache_key_rules =
+                        key_options[rng.gen_range(0..key_options.len())].clone();
                 }
             }
 
-            all_results.push((candidate, obj));
+            // Evaluate candidate
+            if let Ok(obj) = eval_fn(&candidate) {
+                let delta = obj - current_obj;
+                let accept = if delta > 0.0 {
+                    true
+                } else {
+                    temp > 0.0 && rng.gen::<f64>() < (delta / temp).exp()
+                };
+
+                if accept {
+                    current = candidate.clone();
+                    current_obj = obj;
+
+                    if obj > best_obj {
+                        best = candidate.clone();
+                        best_obj = obj;
+                    }
+                }
+
+                all_results.push((candidate, obj));
+            }
+            evaluated += 1;
+            temp *= cooling_rate;
         }
-        evaluated += 1;
-        temp *= cooling_rate;
-    }
+    } // end restart loop
 
     all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
