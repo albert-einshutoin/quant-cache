@@ -731,7 +731,7 @@ pub(crate) struct S3FifoEntry {
 /// Ghost: metadata-only for recently evicted from Small.
 ///
 /// Data (size, freq) lives in HashMaps for O(1) lookup/update.
-/// VecDeque<String> tracks FIFO order only.
+/// `VecDeque<String>` tracks FIFO order only.
 /// Ref: Yang et al., "FIFO Queues are All You Need", SOSP 2023.
 pub struct S3FifoPolicy {
     small_capacity: u64,

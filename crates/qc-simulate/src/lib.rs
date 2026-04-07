@@ -1,3 +1,13 @@
+//! Trace replay simulation engine for quant-cache.
+//!
+//! Provides:
+//! - [`engine::TraceReplayEngine`] — replay traces against any [`engine::CachePolicy`]
+//! - [`baselines`] — LRU, GDSF, SIEVE, S3-FIFO, Belady, economic hybrid policies
+//! - [`comparator::Comparator`] — multi-policy side-by-side comparison
+//! - [`ir_policy::IrPolicy`] — PolicyIR-driven cache policy for deployment evaluation
+//! - [`synthetic`] — trace generation and feature aggregation
+//! - [`reuse_distance`] / [`co_access`] — V2 scoring inputs
+
 pub mod baselines;
 pub mod co_access;
 pub mod comparator;
