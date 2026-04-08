@@ -832,6 +832,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qc-ffi"
+version = "0.3.0"
+dependencies = [
+ "qc-model",
+ "qc-solver",
+]
+
+[[package]]
 name = "qc-model"
 version = "0.3.0"
 dependencies = [

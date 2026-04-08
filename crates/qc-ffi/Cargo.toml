@@ -1,0 +1,14 @@
+[package]
+name = "qc-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "C FFI bindings for quant-cache economic cache scoring and solving"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+qc-model = { workspace = true }
+qc-solver = { workspace = true }

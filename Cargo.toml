@@ -4,6 +4,7 @@ members = [
     "crates/qc-solver",
     "crates/qc-simulate",
     "crates/qc-cli",
+    "crates/qc-ffi",
 ]
 resolver = "2"
 
