@@ -2,7 +2,7 @@
 
 **Version:** 3.0
 **Date:** 2026-04-07
-**Status:** Phase A-E complete (v0.2.0). Next: performance foundation → operationalization → integration.
+**Status:** Phase A-H complete (v0.3.0). All phases delivered.
 
 ---
 
@@ -18,13 +18,10 @@ quant-cache evolves from an evaluation framework into an **economic cache contro
 ## Phase Overview
 
 ```text
-Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
-  done       done        done        done        done*
-evaluation  Policy IR   Policy      Deployment  Multi-vendor
-framework   + evaluator search      scaffold    + quantum
-
-V1.6 Reuse Distance Scoring: DONE
-(*Phase E: real deploy validation remains — requires production environment)
+Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E ──→ Phase F ──→ Phase G ──→ Phase H
+  done       done        done        done        done        done        done        done
+evaluation  Policy IR   Policy      Deployment  Multi-vendor Compact     Pipeline    C FFI
+framework   + evaluator search      scaffold    + quantum    trace       + output    + Python
 ```
 
 ---
@@ -358,7 +355,7 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase F — Performance Foundation (v0.3.0)
+## Phase F — Performance Foundation (DONE)
 
 **Goal:** Enable 1B+ event processing with bounded memory.
 
@@ -389,7 +386,7 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase G — Operationalization (v0.4.0)
+## Phase G — Operationalization (DONE)
 
 **Goal:** Run quant-cache continuously in production pipelines + publish to crates.io.
 
@@ -411,7 +408,7 @@ they inform which policy configurations handle correlated access patterns.
 
 ---
 
-## Phase H — Integration (v0.5.0)
+## Phase H — Integration (DONE)
 
 **Goal:** Expose qc-solver as a C library for Nginx/Envoy module integration.
 

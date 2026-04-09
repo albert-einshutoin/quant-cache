@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-04-08
+## [0.3.0] - 2026-04-09
 
-Phase F complete: compact trace representation + Phase G: operationalization.
+Phase F (performance), Phase G (operationalization), Phase H (integration) complete.
 
 ### Added
 - **CompactTraceEvent** — per-event memory reduced from ~200B to 64B via u32 string interning
@@ -19,6 +19,8 @@ Phase F complete: compact trace representation + Phase G: operationalization.
 - **Output format documentation** (docs/output-formats.md) — stable JSON/CSV schemas
 - **Cloudflare + Fastly log parsers** with bounded reads and line-level diagnostics
 - **V2.5 admission threshold calibration** — automatic percentile sweep in compare command
+- **C FFI library** (`qc-ffi`) — `libqc_ffi` shared library exposing score + solve functions via C ABI
+- **Python ctypes example** — demonstrates calling qc-ffi from Python without PyO3
 
 ### Changed
 - simulate command uses compact replay path (drops original events after interning)
